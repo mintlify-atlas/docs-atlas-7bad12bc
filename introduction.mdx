@@ -1,0 +1,50 @@
+---
+title: "ShedLock: Distributed Scheduling Lock for Java"
+description: "ShedLock prevents concurrent execution of scheduled tasks across distributed nodes using time-based locks backed by an external store."
+---
+
+ShedLock is a Java library that ensures your scheduled tasks execute at most once at the same time across a distributed cluster. When one node acquires a lock and begins executing a task, every other node that attempts the same task skips execution rather than waiting. ShedLock coordinates this through a lock record written to an external store — whichever node writes the record first wins, and the record expires automatically if the node crashes before releasing it.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Add distributed locking to a Spring Boot app in four steps.
+  </Card>
+  <Card title="How it works" icon="lightbulb" href="/how-it-works">
+    Understand the locking model, lock record lifecycle, and time-based expiry.
+  </Card>
+  <Card title="Lock providers" icon="database" href="/providers/overview">
+    Choose from 20+ backends: JDBC, MongoDB, Redis, DynamoDB, Cassandra, and more.
+  </Card>
+  <Card title="Spring integration" icon="leaf" href="/integration/spring">
+    Configure `@EnableSchedulerLock` and annotate tasks with `@SchedulerLock`.
+  </Card>
+</CardGroup>
+
+## What ShedLock is not
+
+ShedLock is not a distributed scheduler and will never be one. It does not queue executions, reschedule skipped runs, or guarantee that a task fires exactly once in total — it only prevents concurrent execution. If a task is already locked, other nodes skip that run entirely; they do not wait and retry.
+
+<Note>
+  If you need a full distributed scheduler that queues and guarantees single execution, consider [db-scheduler](https://github.com/kagkarlsson/db-scheduler) or [JobRunr](https://www.jobrunr.io/en/). ShedLock is designed for tasks that are safe to run repeatedly and simply must not run in parallel.
+</Note>
+
+## Core concepts
+
+**LockProvider** is the interface that connects ShedLock to your chosen external store. You configure one `LockProvider` bean in your application context, and ShedLock uses it to attempt lock acquisition before each annotated task runs. Multiple implementations are available — JDBC, Redis, MongoDB, and others — and you can write a custom wrapper around any of them.
+
+**Lock name** is a unique string identifier for each protected task. Only one execution with a given lock name can hold the lock at the same time. Lock names must be unique across all tasks you want to protect.
+
+**`lockAtMostFor`** specifies the maximum duration a lock is held. If the node holding the lock crashes or is killed before it finishes, this duration ensures the lock is eventually released so other nodes can proceed. Set this value significantly longer than your expected maximum execution time — if a task outlasts `lockAtMostFor`, the lock expires and another node may start the same task, causing unpredictable results.
+
+**`lockAtLeastFor`** specifies the minimum duration a lock is held, even if the task finishes faster. This prevents multiple nodes from racing to execute the same short-lived task when clock skew between nodes is larger than the task's execution time. Setting `lockAtLeastFor` equal to the scheduling interval is a common pattern for tasks that must run at most once per period.
+
+## Supported frameworks
+
+ShedLock provides first-class integration modules for the most common Java frameworks:
+
+- **Spring** — via `shedlock-spring` and the `@EnableSchedulerLock` / `@SchedulerLock` annotations
+- **Micronaut** — via `shedlock-micronaut4` (since ShedLock 4.0.0)
+- **CDI (Quarkus)** — via `shedlock-cdi` (since ShedLock 5.0.0)
+- **Standalone** — use `DefaultLockingTaskExecutor` directly without any framework
+
+All four integrations share the same `LockProvider` interface and the same `lockAtMostFor` / `lockAtLeastFor` semantics. Only the wiring and annotation classes differ between frameworks.

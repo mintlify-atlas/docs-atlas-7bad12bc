@@ -1,0 +1,120 @@
+---
+title: "Redis lock providers"
+description: "Configure ShedLock with Redis using Spring RedisConnectionFactory, reactive Redis, the Jedis client, or the Lettuce client as the lock provider."
+---
+
+ShedLock supports Redis through four provider implementations. All four use Redis string keys to represent locks and rely on Redis's atomic `SET NX` (set-if-not-exists) command to coordinate acquisition. The `ENV` parameter acts as a key prefix that namespaces lock entries under a chosen environment label, which lets you share a single Redis instance across multiple application environments.
+
+<Tabs>
+  <Tab title="Spring (blocking)">
+    Uses Spring Data Redis's `RedisConnectionFactory`. This is the most common choice for Spring Boot applications that already have Spring Data Redis on the classpath.
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-redis-spring</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.redis.spring.RedisLockProvider;
+    import org.springframework.data.redis.connection.RedisConnectionFactory;
+
+    @Bean
+    public LockProvider lockProvider(RedisConnectionFactory connectionFactory) {
+        return new RedisLockProvider(connectionFactory, ENV);
+    }
+    ```
+  </Tab>
+  <Tab title="Spring (reactive)">
+    Uses Spring Data Redis's `ReactiveRedisConnectionFactory` for non-blocking applications. Uses the same Maven artifact as the blocking Spring provider.
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-redis-spring</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.redis.spring.ReactiveRedisLockProvider;
+    import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
+
+    @Bean
+    public LockProvider lockProvider(ReactiveRedisConnectionFactory connectionFactory) {
+        return new ReactiveRedisLockProvider.Builder(connectionFactory)
+            .environment(ENV)
+            .build();
+    }
+    ```
+  </Tab>
+  <Tab title="Jedis">
+    Uses the Jedis client directly, without a Spring Data Redis dependency.
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-redis-jedis4</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.redis.jedis.JedisLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(JedisPool jedisPool) {
+        return new JedisLockProvider(jedisPool, ENV);
+    }
+    ```
+  </Tab>
+  <Tab title="Lettuce">
+    Uses the Lettuce client with a `StatefulRedisConnection`.
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-redis-lettuce</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.redis.lettuce.LettuceLockProvider;
+    import io.lettuce.core.api.StatefulRedisConnection;
+
+    @Bean
+    public LockProvider lockProvider(StatefulRedisConnection<String, String> connection) {
+        return new LettuceLockProvider(connection, ENV);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## The ENV parameter
+
+The `ENV` parameter (for example `"production"` or `"staging"`) is prepended to every Redis key that ShedLock creates. This namespaces your locks so that multiple environments sharing a Redis cluster do not interfere with each other. Choose a value that uniquely identifies the environment your application is running in.
+
+## Redis reliability trade-offs
+
+<Warning>
+  All Redis lock providers use the classical `SETNX`-based locking pattern described in the [Redis documentation](https://redis.io/commands/setnx#design-pattern-locking-with-codesetnxcode). This pattern is not fully reliable in the event of a Redis master failure. If the Redis primary goes down after a node acquires a lock but before the lock key is replicated to a replica, the replica that is promoted to primary will have no record of the lock, and another node can acquire the same lock. Use Redis as a lock store only if your workload can tolerate this small risk of duplicate concurrent execution.
+</Warning>

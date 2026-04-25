@@ -1,0 +1,104 @@
+---
+title: "CDI integration (Quarkus)"
+description: "Add ShedLock to CDI-based applications like Quarkus using the shedlock-cdi module for annotation-driven distributed locking on scheduled methods."
+---
+
+ShedLock's CDI integration uses Jakarta CDI interceptors to apply distributed locking to `@Scheduled` methods. It follows the same model as the Spring and Micronaut integrations: only methods annotated with `@SchedulerLock` are locked, other nodes skip execution when the lock is already held, and locks expire via `lockAtMostFor` if the node crashes before releasing them. CDI integration has been available since ShedLock version 5.0.0 and has been tested with Quarkus.
+
+## Setup
+
+<Steps>
+  <Step title="Add the dependency">
+    Add `shedlock-cdi` to your `pom.xml`:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-cdi</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+  </Step>
+
+  <Step title="Configure the default lockAtMostFor">
+    Set the default maximum lock duration in `application.properties`. This value is the fallback for any `@SchedulerLock` annotation that does not specify `lockAtMostFor` explicitly.
+
+    ```properties
+    shedlock.defaults.lock-at-most-for=PT30S
+    ```
+
+    The value is parsed as an ISO-8601 duration. `PT30S` means 30 seconds.
+  </Step>
+
+  <Step title="Configure a LockProvider bean">
+    Expose your `LockProvider` as a CDI bean using `@Produces` and `@Singleton`:
+
+    ```java
+    import jakarta.enterprise.context.ApplicationScoped;
+    import jakarta.enterprise.inject.Produces;
+    import jakarta.inject.Singleton;
+    import net.javacrumbs.shedlock.core.LockProvider;
+
+    @ApplicationScoped
+    public class LockProviderProducer {
+
+        @Produces
+        @Singleton
+        public LockProvider lockProvider() {
+            // configure and return your chosen LockProvider
+            // e.g. JdbcTemplateLockProvider, MongoLockProvider, etc.
+        }
+    }
+    ```
+
+    See [Lock providers](/providers/overview) for the full list of backends and configuration examples.
+  </Step>
+
+  <Step title="Annotate your scheduled tasks">
+    Add `@SchedulerLock` from the `net.javacrumbs.shedlock.cdi` package to each method you want to protect. Call `assertLocked()` inside the method body to catch interceptor misconfiguration early.
+
+    ```java
+    import io.quarkus.scheduler.Scheduled;
+    import net.javacrumbs.shedlock.cdi.SchedulerLock;
+    import net.javacrumbs.shedlock.core.LockAssert;
+    import jakarta.enterprise.context.ApplicationScoped;
+
+    @ApplicationScoped
+    public class MyTask {
+
+        @Scheduled(every = "1s")
+        @SchedulerLock(name = "myTask")
+        public void myTask() {
+            LockAssert.assertLocked();
+            // task logic
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## `@SchedulerLock` attributes
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `name` | `String` | (required) | The lock name. Must be unique across all tasks you want to protect. Used as the primary key in the lock store. |
+| `lockAtMostFor` | `String` | `""` | Maximum duration the lock is held. Overrides the default from `application.properties`. Empty string means the configured default is used. |
+| `lockAtLeastFor` | `String` | `""` | Minimum duration the lock is held after the task finishes. Prevents re-execution when tasks are short-lived and nodes have clock skew. |
+
+Duration values are parsed as ISO-8601 strings (`PT30S`, `PT1M`, `PT1H`).
+
+## Limitations
+
+<Note>
+  The CDI integration does not support Spring Expression Language (SpEL) or any expression language in annotation attributes. Lock names must be plain string literals. If you need dynamic lock names, implement a custom `LockProvider` wrapper.
+</Note>
+
+## Framework compatibility
+
+The `shedlock-cdi` module depends only on `jakarta.enterprise.cdi-api` and `microprofile-config-api`. This means it is theoretically usable in any CDI-compatible framework that provides those APIs. However, it has only been tested with Quarkus.
+
+<Warning>
+  The implementation is built on top of `javax` annotations because Quarkus had not fully migrated to the Jakarta EE namespace when this module was written. Behavior in other CDI containers that have completed the Jakarta namespace migration may differ.
+</Warning>
+
+If you need CDI support in a framework other than Quarkus and encounter issues, contributions and pull requests are welcome on the [ShedLock GitHub repository](https://github.com/lukas-krecan/ShedLock).

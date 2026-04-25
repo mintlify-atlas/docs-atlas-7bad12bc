@@ -1,0 +1,113 @@
+---
+title: "Micronaut integration"
+description: "Use ShedLock with Micronaut to coordinate scheduled task execution across distributed instances using the shedlock-micronaut4 module."
+---
+
+ShedLock's Micronaut integration uses Micronaut AOP to intercept `@Scheduled` methods and apply distributed locking before execution. It follows the same model as the Spring integration: only methods annotated with `@SchedulerLock` are locked, other nodes skip rather than wait when a lock is held, and locks expire automatically via `lockAtMostFor` if the holding node crashes. Micronaut integration has been available since ShedLock version 4.0.0.
+
+## Setup
+
+<Steps>
+  <Step title="Add the dependency">
+    Add `shedlock-micronaut4` to your `pom.xml`:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-micronaut4</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+  </Step>
+
+  <Step title="Configure the default lockAtMostFor">
+    Set the default maximum lock duration in `application.yml`. This value is used as the fallback for any `@SchedulerLock` annotation that does not specify `lockAtMostFor` explicitly.
+
+    ```yaml
+    shedlock:
+      defaults:
+        lock-at-most-for: 1m
+    ```
+
+    Micronaut's [duration conversion](https://docs.micronaut.io/latest/guide/config.html#_duration_conversion) is used for parsing, so values such as `PT1M`, `1m`, and `60s` are all valid.
+  </Step>
+
+  <Step title="Configure a LockProvider bean">
+    Declare your `LockProvider` as a `@Singleton` bean. The example below uses the Micronaut JDBC provider, but any supported lock provider works here.
+
+    ```java
+    import io.micronaut.context.annotation.Factory;
+    import jakarta.inject.Singleton;
+    import net.javacrumbs.shedlock.core.LockProvider;
+    import net.javacrumbs.shedlock.provider.jdbc.micronaut.MicronautJdbcLockProvider;
+    import io.micronaut.transaction.TransactionOperations;
+    import java.sql.Connection;
+
+    @Factory
+    public class LockProviderFactory {
+
+        @Singleton
+        public LockProvider lockProvider(TransactionOperations<Connection> transactionManager) {
+            return new MicronautJdbcLockProvider(transactionManager);
+        }
+    }
+    ```
+
+    For the full list of available lock providers and their configuration, see [Lock providers](/providers/overview).
+  </Step>
+
+  <Step title="Annotate your scheduled tasks">
+    Add `@SchedulerLock` from the `net.javacrumbs.shedlock.micronaut` package to each task you want to protect. Call `assertLocked()` inside the method body to catch AOP misconfiguration early.
+
+    ```java
+    import io.micronaut.scheduling.annotation.Scheduled;
+    import net.javacrumbs.shedlock.core.LockAssert;
+    import net.javacrumbs.shedlock.micronaut.SchedulerLock;
+    import jakarta.inject.Singleton;
+
+    @Singleton
+    public class MyTask {
+
+        @Scheduled(fixedDelay = "1s")
+        @SchedulerLock(name = "myTask")
+        public void myTask() {
+            LockAssert.assertLocked();
+            // task logic
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## `@SchedulerLock` attributes
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `name` | `String` | (required) | The lock name. Must be unique across all tasks you want to protect. Used as the primary key in the lock store. |
+| `lockAtMostFor` | `String` | `""` | Maximum duration the lock is held. Overrides the default from `application.yml`. Empty string means the configured default is used. |
+| `lockAtLeastFor` | `String` | `""` | Minimum duration the lock is held after the task finishes. Prevents re-execution on fast tasks when nodes have clock skew. |
+
+Duration values follow [Micronaut duration conversion](https://docs.micronaut.io/latest/guide/config.html#_duration_conversion): `1s`, `5m`, `1h`, and ISO-8601 formats such as `PT30S` are all accepted.
+
+## Micronaut version requirements
+
+<Note>
+  `shedlock-micronaut4` requires Micronaut 4. If you are using Micronaut 3, use ShedLock 5.x.x, which supports both Micronaut 3 and 4.
+</Note>
+
+## Compatibility matrix
+
+| ShedLock version | Minimum JVM | Tested with |
+|---|---|---|
+| 7.x.x | 17 | Micronaut 4 |
+| 6.x.x | 17 | Micronaut 4 |
+| 5.x.x | 17 | Micronaut 3, 4 |
+| 4.x.x | 8 | — |
+
+ShedLock may work with additional Micronaut versions not listed here — the table reflects what is actively tested.
+
+## Lock provider selection
+
+The Micronaut integration works with every lock provider ShedLock supports. When using JDBC-based providers, prefer the Micronaut-native `MicronautJdbcLockProvider` to avoid adding a Spring JDBC dependency. For other backends (MongoDB, Redis, DynamoDB, etc.), the standard provider modules work without any framework dependency.
+
+See [Lock providers](/providers/overview) for the full list of backends and configuration examples.

@@ -1,0 +1,231 @@
+---
+title: "Spring integration"
+description: "Integrate ShedLock with Spring using @EnableSchedulerLock and @SchedulerLock to prevent concurrent scheduled task execution across distributed nodes."
+---
+
+ShedLock's Spring integration wraps your `@Scheduled` methods in an AOP proxy that acquires a distributed lock before execution. Only methods explicitly annotated with `@SchedulerLock` are affected — all other scheduled methods run without any locking. When a lock is already held by another node, execution is skipped (not blocked), and the method is not called.
+
+## Setup
+
+<Steps>
+  <Step title="Add the dependency">
+    Add `shedlock-spring` to your `pom.xml`:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-spring</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+  </Step>
+
+  <Step title="Enable scheduler locking">
+    Add `@EnableSchedulerLock` to your Spring `@Configuration` class alongside `@EnableScheduling`. The `defaultLockAtMostFor` attribute sets the fallback maximum lock duration used for any `@SchedulerLock` annotation that does not specify its own value.
+
+    ```java
+    import net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock;
+    import org.springframework.context.annotation.Configuration;
+    import org.springframework.scheduling.annotation.EnableScheduling;
+
+    @Configuration
+    @EnableScheduling
+    @EnableSchedulerLock(defaultLockAtMostFor = "10m")
+    public class SchedulerConfiguration {
+        // other beans
+    }
+    ```
+  </Step>
+
+  <Step title="Configure a LockProvider bean">
+    ShedLock requires an external store to coordinate locks. Declare a `LockProvider` bean that connects to your chosen backend. The example below uses `JdbcTemplateLockProvider`, which stores lock records in a relational database table.
+
+    ```java
+    import net.javacrumbs.shedlock.core.LockProvider;
+    import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
+    import org.springframework.jdbc.core.JdbcTemplate;
+    import javax.sql.DataSource;
+
+    @Bean
+    public LockProvider lockProvider(DataSource dataSource) {
+        return new JdbcTemplateLockProvider(
+            JdbcTemplateLockProvider.Configuration.builder()
+                .withJdbcTemplate(new JdbcTemplate(dataSource))
+                .usingDbTime()
+                .build()
+        );
+    }
+    ```
+
+    <Tip>
+      `.usingDbTime()` makes ShedLock use the database server clock for all time comparisons. This eliminates locking failures caused by clock drift between application nodes. For the full list of available lock providers, see [Lock providers](/providers/overview).
+    </Tip>
+  </Step>
+
+  <Step title="Annotate your scheduled methods">
+    Add `@SchedulerLock` to each `@Scheduled` method you want to protect. Only annotated methods participate in locking.
+
+    ```java
+    import net.javacrumbs.shedlock.core.LockAssert;
+    import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+    import org.springframework.scheduling.annotation.Scheduled;
+    import org.springframework.stereotype.Component;
+
+    @Component
+    public class ReportingTask {
+
+        @Scheduled(cron = "0 */15 * * * *")
+        @SchedulerLock(name = "reportingTask", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+        public void generateReport() {
+            LockAssert.assertLocked();
+            // task logic
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## `@EnableSchedulerLock` attributes
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `defaultLockAtMostFor` | `String` | (required) | Maximum time a lock is held if the node crashes before releasing it. Used as the fallback when `@SchedulerLock` does not specify `lockAtMostFor`. Set this well above the maximum expected task execution time. |
+| `defaultLockAtLeastFor` | `String` | `"PT0S"` | Minimum time a lock is held, even if the task finishes faster. Applied when `@SchedulerLock` does not specify `lockAtLeastFor`. Defaults to zero (the lock is released immediately after the task finishes). |
+| `interceptMode` | `InterceptMode` | `PROXY_METHOD` | Controls how ShedLock intercepts execution. `PROXY_METHOD` (default since 4.0.0) proxies the annotated method directly. `PROXY_SCHEDULER` (deprecated) proxies the `TaskScheduler`. See [Modes of Spring integration](#modes-of-spring-integration). |
+
+## `@SchedulerLock` attributes
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `name` | `String` | `""` | The lock name. Must be unique across all tasks you want to protect. Used as the primary key in the lock store. Supports Spring Expression Language (SpEL). |
+| `lockAtMostFor` | `String` | `""` | Maximum duration the lock is held. Overrides `defaultLockAtMostFor` from `@EnableSchedulerLock`. Empty string means the default is used. |
+| `lockAtLeastFor` | `String` | `""` | Minimum duration the lock is held after the task finishes. Overrides `defaultLockAtLeastFor` from `@EnableSchedulerLock`. Empty string means the default is used. |
+
+Duration values support multiple formats: `10s`, `5m`, `1h`, `1d` (since 4.0.0), plain milliseconds (`100`), and ISO-8601 (`PT30S`).
+
+## Lock behavior
+
+1. Only methods annotated with `@SchedulerLock` are locked. ShedLock ignores all other `@Scheduled` methods.
+2. Only one task with the same lock name can execute at the same time across all nodes.
+3. If the lock is held, other nodes attempting the same task **skip execution** — they do not block or queue.
+4. The lock is released as soon as the task finishes (unless `lockAtLeastFor` keeps it open longer).
+5. If the node crashes before releasing the lock, `lockAtMostFor` acts as a safety net — the lock automatically expires after that duration.
+6. If `lockAtMostFor` is not specified on `@SchedulerLock`, the value from `@EnableSchedulerLock.defaultLockAtMostFor` is used.
+7. `lockAtLeastFor` prevents re-execution when tasks are short-lived and clock skew between nodes is larger than the execution time. Setting `lockAtLeastFor` equal to the scheduling interval is a common pattern for at-most-once-per-period tasks.
+8. The `name`, `lockAtMostFor`, and `lockAtLeastFor` attributes all support Spring Expression Language (SpEL).
+
+<Warning>
+  Set `lockAtMostFor` to a value significantly larger than the maximum expected execution time. If a task runs longer than `lockAtMostFor`, the lock expires and another node can acquire it while the first is still running. The results are unpredictable.
+</Warning>
+
+### Example: at-most-once per 15 minutes
+
+```java
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.springframework.scheduling.annotation.Scheduled;
+
+@Scheduled(cron = "0 */15 * * * *")
+@SchedulerLock(name = "scheduledTaskName", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+public void scheduledTask() {
+    // do something
+}
+```
+
+By setting both `lockAtMostFor` and `lockAtLeastFor` to `14m`, the lock expires after 14 minutes if the node crashes, and is held for at least 14 minutes even if the task finishes in seconds. This guarantees the task runs at most once per 15-minute window.
+
+## Modes of Spring integration
+
+ShedLock supports two integration modes, selected via the `interceptMode` attribute on `@EnableSchedulerLock`.
+
+### `PROXY_METHOD` (default since 4.0.0)
+
+ShedLock creates an AOP proxy around the annotated method. The lock is acquired every time the method is called — including direct calls from application code, not just invocations from the Spring scheduler.
+
+- Works well alongside other AOP-based frameworks (OpenTelemetry, Micrometer, etc.)
+- If the lock is already held and the method has a return type, `null` or an empty `Optional` is returned (primitive return types are not supported)
+- Requires that protected methods are `public` and non-`final` (Spring AOP limitation)
+
+### `PROXY_SCHEDULER` (deprecated)
+
+ShedLock wraps the Spring `TaskScheduler` in an AOP proxy. The lock is only applied when the method is invoked through the scheduler — direct method calls bypass locking.
+
+```java
+@EnableSchedulerLock(interceptMode = InterceptMode.PROXY_SCHEDULER)
+```
+
+<Warning>
+  `PROXY_SCHEDULER` does not play well with instrumentation libraries such as OpenTelemetry that also wrap `TaskScheduler`. Use `PROXY_METHOD` unless you have a specific reason to prefer the scheduler proxy.
+</Warning>
+
+If you need a custom `TaskScheduler` with `PROXY_SCHEDULER`, declare it as a bean and ShedLock will wrap it automatically:
+
+```java
+@Bean
+public TaskScheduler taskScheduler() {
+    return new MySpecialTaskScheduler();
+}
+```
+
+## Multiple LockProvider support
+
+Since version 6.0.0, you can define more than one `LockProvider` bean in your application context and choose between them per task using `@LockProviderToUse`.
+
+```java
+import net.javacrumbs.shedlock.spring.annotation.LockProviderToUse;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.springframework.scheduling.annotation.Scheduled;
+
+@Scheduled(fixedDelay = 60_000)
+@SchedulerLock(name = "myTask")
+@LockProviderToUse("redisLockProvider")
+public void myTask() {
+    LockAssert.assertLocked();
+    // task logic
+}
+```
+
+`@LockProviderToUse` accepts the Spring bean name of the desired `LockProvider`. It can be placed on a method, a class, or a package. If the annotation is not found and multiple providers exist, execution fails at runtime. For fully dynamic provider selection, use a `LockProvider` wrapper as described in [multi-tenancy](/advanced/multi-tenancy).
+
+## Lock assert
+
+`LockAssert.assertLocked()` verifies that a lock is held when the method executes. Call it at the top of any locked method to detect AOP misconfiguration early — if the proxy is not correctly applied, the assertion will throw an exception rather than silently running without a lock.
+
+```java
+@Scheduled(fixedDelay = 60_000)
+@SchedulerLock(name = "myTask")
+public void myTask() {
+    LockAssert.assertLocked();
+    // task logic
+}
+```
+
+In unit tests where you want to call the method directly without a lock, disable the assertion on the current thread:
+
+```java
+LockAssert.TestHelper.makeAllAssertsPass(true);
+```
+
+Call this in a `@BeforeEach` or equivalent setup method so it applies to all test executions on that thread.
+
+## Kotlin notes
+
+ShedLock works with Kotlin. The one issue to be aware of is that Spring AOP does not proxy `final` methods, and Kotlin classes and methods are `final` by default.
+
+If your scheduled class is annotated with `@Component` (or another Spring stereotype annotation), the [Kotlin Spring compiler plugin](https://kotlinlang.org/docs/all-open-plugin.html#spring-support) automatically opens the class and its methods, so everything works without extra configuration.
+
+If `@Component` is not present, you must explicitly declare the class or method as `open`:
+
+```kotlin
+@Component
+open class MyTask {
+
+    @Scheduled(fixedDelay = 60_000)
+    @SchedulerLock(name = "myTask")
+    open fun myTask() {
+        LockAssert.assertLocked()
+        // task logic
+    }
+}
+```
+
+Alternatively, switch to `PROXY_SCHEDULER` mode, which does not require the method itself to be open.

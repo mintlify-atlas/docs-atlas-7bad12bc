@@ -1,0 +1,229 @@
+---
+title: "JDBC lock providers"
+description: "Configure ShedLock with relational databases using JdbcTemplate, jOOQ, R2DBC, Exposed (Kotlin), or Micronaut Data JDBC providers and a shared shedlock table."
+---
+
+ShedLock's JDBC providers store lock records in a dedicated `shedlock` table in your relational database. All five JDBC providers read from and write to the same table schema, so you create the table once and then choose the provider that matches your application's data access layer. If you have no existing preference, use `JdbcTemplateLockProvider` — it is the most fully-featured implementation and receives the most testing.
+
+## Database schema
+
+Create the `shedlock` table before starting your application. The `name` column must be the primary key.
+
+<Warning>
+  Do not manually delete rows from the `shedlock` table. ShedLock caches the existence of lock rows in memory, so a deleted row will not be recreated until the application restarts. If you need to release a stuck lock, update the `lock_until` column to a past timestamp instead of deleting the row.
+</Warning>
+
+<Tabs>
+  <Tab title="MySQL / MariaDB">
+    ```sql
+    CREATE TABLE shedlock(
+        name       VARCHAR(64)   NOT NULL,
+        lock_until TIMESTAMP(3)  NOT NULL,
+        locked_at  TIMESTAMP(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        locked_by  VARCHAR(255)  NOT NULL,
+        PRIMARY KEY (name)
+    );
+    ```
+  </Tab>
+  <Tab title="PostgreSQL">
+    ```sql
+    CREATE TABLE shedlock(
+        name       VARCHAR(64)  NOT NULL,
+        lock_until TIMESTAMP    NOT NULL,
+        locked_at  TIMESTAMP    NOT NULL,
+        locked_by  VARCHAR(255) NOT NULL,
+        PRIMARY KEY (name)
+    );
+    ```
+  </Tab>
+  <Tab title="Oracle">
+    ```sql
+    CREATE TABLE shedlock(
+        name       VARCHAR(64)  NOT NULL,
+        lock_until TIMESTAMP(3) NOT NULL,
+        locked_at  TIMESTAMP(3) NOT NULL,
+        locked_by  VARCHAR(255) NOT NULL,
+        PRIMARY KEY (name)
+    );
+    ```
+  </Tab>
+  <Tab title="MS SQL">
+    ```sql
+    CREATE TABLE shedlock(
+        name       VARCHAR(64)  NOT NULL,
+        lock_until datetime2    NOT NULL,
+        locked_at  datetime2    NOT NULL,
+        locked_by  VARCHAR(255) NOT NULL,
+        PRIMARY KEY (name)
+    );
+    ```
+  </Tab>
+  <Tab title="DB2">
+    ```sql
+    CREATE TABLE shedlock(
+        name       VARCHAR(64)  NOT NULL PRIMARY KEY,
+        lock_until TIMESTAMP    NOT NULL,
+        locked_at  TIMESTAMP    NOT NULL,
+        locked_by  VARCHAR(255) NOT NULL
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## JdbcTemplate (recommended)
+
+`JdbcTemplateLockProvider` is the most commonly used JDBC provider. It supports all major relational databases and provides the widest range of configuration options.
+
+Add the dependency:
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-jdbc-template</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+Declare the `LockProvider` bean:
+
+```java
+import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
+
+@Bean
+public LockProvider lockProvider(DataSource dataSource) {
+    return new JdbcTemplateLockProvider(
+        JdbcTemplateLockProvider.Configuration.builder()
+            .withJdbcTemplate(new JdbcTemplate(dataSource))
+            .usingDbTime() // Works on Postgres, MySQL, MariaDB, MS SQL, Oracle, DB2, HSQL and H2
+            .build()
+    );
+}
+```
+
+<Tip>
+  Always call `.usingDbTime()`. This option makes ShedLock use UTC time sourced from the database server's clock rather than the application server's clock. Because all nodes then agree on the current time, you avoid locking failures caused by clock drift. It also uses database-engine-specific SQL that prevents INSERT race conditions.
+</Tip>
+
+### Fine-grained configuration
+
+Use additional builder options to customize table name, column names, the `locked_by` value, and case handling:
+
+```java
+import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
+import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider.ColumnNames;
+
+@Bean
+public LockProvider lockProvider(DataSource dataSource) {
+    return new JdbcTemplateLockProvider(
+        JdbcTemplateLockProvider.Configuration.builder()
+            .withTableName("shdlck")
+            .withColumnNames(new ColumnNames("n", "lck_untl", "lckd_at", "lckd_by"))
+            .withJdbcTemplate(new JdbcTemplate(dataSource))
+            .withLockedByValue("my-node-identifier")
+            .withDbUpperCase(true)
+            .build()
+    );
+}
+```
+
+To place the table in a specific schema, use dot notation in the table name:
+
+```java
+new JdbcTemplateLockProvider(dataSource, "my_schema.shedlock")
+```
+
+`withDbUpperCase(true)` forces all table and column name references to uppercase, which is required for databases configured with case-sensitive identifiers. The default is `false` (lowercase).
+
+## R2DBC
+
+R2DBC support is available for applications that require fully non-blocking database access.
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-r2dbc</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+```java
+@Bean
+public LockProvider lockProvider(io.r2dbc.spi.ConnectionFactory connectionFactory) {
+    return new R2dbcLockProvider(connectionFactory);
+}
+```
+
+<Warning>
+  R2DBC support is experimental. The capabilities of this provider are limited, and the R2DBC ecosystem is still evolving. Breaking changes from upstream libraries are possible. Consider using a connection pool such as [r2dbc-pool](https://github.com/r2dbc/r2dbc-pool) to manage connections.
+</Warning>
+
+## jOOQ
+
+The jOOQ provider requires the same `shedlock` table created in the [Database schema](#database-schema) section above.
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-jooq</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+```java
+import net.javacrumbs.shedlock.provider.jooq.JooqLockProvider;
+
+@Bean
+public LockProvider lockProvider(DSLContext dslContext) {
+    return new JooqLockProvider(dslContext);
+}
+```
+
+<Note>
+  The jOOQ provider has a different transactional behavior from other JDBC providers. While JdbcTemplate creates a new transaction using `REQUIRES_NEW`, jOOQ does not support setting transaction propagation in the same way. ShedLock will attempt to create a new transaction, but depending on your setup, the ShedLock database operations may become part of the enclosing transaction.
+
+  To configure a custom table name, schema, or column names, use jOOQ render mapping as described in [this issue](https://github.com/lukas-krecan/ShedLock/issues/1830#issuecomment-2015820509).
+</Note>
+
+## Exposed (Kotlin)
+
+The Exposed provider is designed for Kotlin applications using JetBrains' Exposed SQL framework. It requires the same table schema as the other JDBC providers.
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-exposed</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+```kotlin
+import net.javacrumbs.shedlock.provider.exposed.ExposedLockProvider
+
+@Bean
+fun lockProvider(database: Database) = ExposedLockProvider(database)
+```
+
+## Micronaut Data JDBC
+
+For Micronaut applications that use Micronaut Data and want to avoid a Spring JDBC dependency, the Micronaut JDBC provider is available. It requires the same table schema as the other JDBC providers.
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-jdbc-micronaut</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+```java
+import net.javacrumbs.shedlock.provider.jdbc.micronaut.MicronautJdbcLockProvider;
+
+@Singleton
+public LockProvider lockProvider(TransactionOperations<Connection> transactionManager) {
+    return new MicronautJdbcLockProvider(transactionManager);
+}
+```
+
+<Note>
+  The Micronaut Data JDBC provider has basic functionality compared to `JdbcTemplateLockProvider`. If you need features like `usingDbTime()`, custom column names, or schema support, use the JdbcTemplate provider alongside a Spring JDBC dependency instead.
+</Note>

@@ -1,0 +1,366 @@
+---
+title: "NoSQL and distributed lock providers"
+description: "Configure ShedLock with Cassandra, Elasticsearch, OpenSearch, ZooKeeper, etcd, Hazelcast, ArangoDB, Neo4j, Couchbase, Apache Ignite, NATS, or In-Memory."
+---
+
+ShedLock supports a wide range of NoSQL and distributed coordination stores as lock backends. This page covers all non-relational, non-Redis, non-cloud providers including column stores, document databases, search engines, distributed coordination tools, and in-memory options for testing.
+
+<AccordionGroup>
+  <Accordion title="Cassandra">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-cassandra</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.cassandra.CassandraLockProvider;
+    import net.javacrumbs.shedlock.provider.cassandra.CassandraLockProvider.Configuration;
+
+    @Bean
+    public CassandraLockProvider lockProvider(CqlSession cqlSession) {
+        return new CassandraLockProvider(
+            Configuration.builder()
+                .withCqlSession(cqlSession)
+                .withTableName("lock")
+                .build()
+        );
+    }
+    ```
+
+    Create the keyspace and table in Cassandra before starting your application:
+
+    ```sql
+    CREATE KEYSPACE shedlock
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
+        AND durable_writes = true;
+
+    CREATE TABLE shedlock.lock (
+        name text PRIMARY KEY,
+        lockUntil timestamp,
+        lockedAt timestamp,
+        lockedBy text
+    );
+    ```
+
+    <Note>
+      `CassandraLockProvider` uses Cassandra driver v4, which is included in Spring Boot since 2.3.
+    </Note>
+  </Accordion>
+
+  <Accordion title="ZooKeeper">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-zookeeper-curator</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.zookeeper.curator.ZookeeperCuratorLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(org.apache.curator.framework.CuratorFramework client) {
+        return new ZookeeperCuratorLockProvider(client);
+    }
+    ```
+
+    <Note>
+      By default, lock nodes are created under the `/shedlock` node in ZooKeeper.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Hazelcast">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-hazelcast4</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.hazelcast4.HazelcastLockProvider;
+
+    @Bean
+    public HazelcastLockProvider lockProvider(HazelcastInstance hazelcastInstance) {
+        return new HazelcastLockProvider(hazelcastInstance);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Elasticsearch">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-elasticsearch9</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.elasticsearch9.ElasticsearchLockProvider;
+
+    @Bean
+    public ElasticsearchLockProvider lockProvider(ElasticsearchClient client) {
+        return new ElasticsearchLockProvider(client);
+    }
+    ```
+
+    <Info>
+      The author's note: using Elasticsearch as a lock store may not be ideal. Only use it if you have no other option available.
+    </Info>
+  </Accordion>
+
+  <Accordion title="OpenSearch">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-opensearch-java</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.opensearch.java.OpenSearchLockProvider;
+
+    @Bean
+    public OpenSearchLockProvider lockProvider(OpenSearchClient openSearchClient) {
+        return new OpenSearchLockProvider(openSearchClient);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ArangoDB">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-arangodb</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.arangodb.ArangoLockProvider;
+
+    @Bean
+    public ArangoLockProvider lockProvider(final ArangoOperations arangoTemplate) {
+        return new ArangoLockProvider(arangoTemplate.driver().db(DB_NAME));
+    }
+    ```
+
+    <Note>
+      `ArangoLockProvider` uses ArangoDB driver v6.7, which is provided by [arango-spring-data](https://github.com/arangodb/spring-data) version 3.3.0.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Neo4j">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-neo4j</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.core.LockConfiguration;
+
+    @Bean
+    Neo4jLockProvider lockProvider(org.neo4j.driver.Driver driver) {
+        return new Neo4jLockProvider(driver);
+    }
+    ```
+
+    <Note>
+      Ensure the `neo4j-java-driver` version used by `shedlock-provider-neo4j` matches the driver version in your project. If you use `spring-boot-starter-data-neo4j`, the driver is likely provided transitively.
+    </Note>
+  </Accordion>
+
+  <Accordion title="etcd">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-etcd-jetcd</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.etcd.jetcd.EtcdLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(Client client) {
+        return new EtcdLockProvider(client);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Apache Ignite">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-ignite</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.ignite.IgniteLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(Ignite ignite) {
+        return new IgniteLockProvider(ignite);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Couchbase">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-couchbase-javaclient3</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.couchbase.javaclient.CouchbaseLockProvider;
+
+    @Bean
+    public CouchbaseLockProvider lockProvider(Bucket bucket) {
+        return new CouchbaseLockProvider(bucket);
+    }
+    ```
+
+    <Note>
+      For Couchbase 3, use the `shedlock-provider-couchbase-javaclient3` module and import from the `net.javacrumbs.shedlock.provider.couchbase3` package.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Memcached">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-memcached-spy</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.memcached.spy.MemcachedLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(net.spy.memcached.MemcachedClient client) {
+        return new MemcachedLockProvider(client, ENV);
+    }
+    ```
+
+    <Warning>
+      Memcached is a cache, not a database. When the cache is full, entries may be evicted before they expire, which means a lock can be released prematurely. Only use this provider if you understand and accept that risk.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="NATS JetStream">
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-jetstream</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.nats.jetstream.NatsJetStreamLockProvider;
+    import io.nats.client.Connection;
+
+    @Bean
+    public LockProvider lockProvider(Connection natsConnection) {
+        return new NatsJetStreamLockProvider(natsConnection);
+    }
+    ```
+
+    <Note>
+      This provider uses a NATS JetStream Key-Value (KV) store with a shared bucket named `shedlock-locks`. The bucket is created automatically if it does not already exist.
+    </Note>
+  </Accordion>
+
+  <Accordion title="In-Memory (testing only)">
+    Add the dependency with `test` scope:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-inmemory</artifactId>
+        <version>7.7.0</version>
+        <scope>test</scope>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.inmemory.InMemoryLockProvider;
+
+    @Bean
+    public LockProvider lockProvider() {
+        return new InMemoryLockProvider();
+    }
+    ```
+
+    <Warning>
+      This provider is intended for testing only. It stores locks in memory within a single JVM, so it provides no coordination across nodes and is not suitable for distributed environments.
+    </Warning>
+  </Accordion>
+</AccordionGroup>

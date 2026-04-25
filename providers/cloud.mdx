@@ -1,0 +1,216 @@
+---
+title: "Cloud lock providers"
+description: "Use AWS DynamoDB or S3, or Google Cloud Datastore, Firestore, Cloud Storage, or Spanner as ShedLock lock backends in cloud environments."
+---
+
+ShedLock provides lock backends for major cloud platforms, letting you use infrastructure you already have in AWS or Google Cloud without running additional services.
+
+<Tabs>
+  <Tab title="AWS">
+    ## DynamoDB
+
+    The DynamoDB provider depends on AWS SDK v2.
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-dynamodb2</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.dynamodb2.DynamoDBLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(software.amazon.awssdk.services.dynamodb.DynamoDbClient dynamoDB) {
+        return new DynamoDBLockProvider(dynamoDB, "Shedlock");
+    }
+    ```
+
+    <Note>
+      The lock table must be created externally with `_id` as the partition key. You can use `DynamoDBUtils#createLockTable` to create it programmatically. A full table definition is available in the `DynamoDBLockProvider` Javadoc.
+    </Note>
+
+    ## S3
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-s3v2</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.s3v2.S3LockProvider;
+
+    @Bean
+    public LockProvider lockProvider(S3Client s3Client) {
+        return new S3LockProvider(s3Client, "BUCKET_NAME");
+    }
+    ```
+  </Tab>
+
+  <Tab title="Google Cloud">
+    ## Datastore
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-datastore</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Declare the `LockProvider` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.datastore.DatastoreLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(com.google.cloud.datastore.Datastore datastore) {
+        return new DatastoreLockProvider(datastore);
+    }
+    ```
+
+    ## Firestore
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-firestore</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Basic configuration:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.firestore.FirestoreLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(com.google.cloud.firestore.Firestore firestore) {
+        return new FirestoreLockProvider(firestore);
+    }
+    ```
+
+    Advanced configuration with custom collection and field names:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.firestore.FirestoreLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(com.google.cloud.firestore.Firestore firestore) {
+        return new FirestoreLockProvider(
+            FirestoreLockProvider.Configuration.builder()
+                .withFirestore(firestore)
+                .withCollectionName("custom_lock_collection")
+                .withFieldNames(new FirestoreLockProvider.FieldNames(
+                    "custom_lock_until",
+                    "custom_locked_at",
+                    "custom_locked_by"
+                ))
+                .build()
+        );
+    }
+    ```
+
+    ## GCS (Cloud Storage)
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-gcs</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Simple configuration using an injected `Storage` bean:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.gcs.GcsLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(com.google.cloud.storage.Storage storage, String bucketName) {
+        return new GcsLockProvider(storage, bucketName);
+    }
+    ```
+
+    Builder configuration using `StorageOptions` to construct the client inline:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.gcs.GcsLockProvider;
+    import com.google.cloud.storage.StorageOptions;
+
+    @Bean
+    public LockProvider lockProvider() {
+        return new GcsLockProvider(
+            StorageOptions.newBuilder()
+                .setProjectId("<YOUR GCP PROJECT ID>")
+                .build()
+                .getService(),
+            "<YOUR BUCKET NAME>"
+        );
+    }
+    ```
+
+    ## Spanner
+
+    Add the dependency:
+
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-provider-spanner</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+
+    Basic configuration:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.spanner.SpannerLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(DatabaseClient databaseClient) {
+        return new SpannerLockProvider(databaseClient);
+    }
+    ```
+
+    Advanced configuration with custom host, table, and column names:
+
+    ```java
+    import net.javacrumbs.shedlock.provider.spanner.SpannerLockProvider;
+
+    @Bean
+    public LockProvider lockProvider(DatabaseClient databaseClient) {
+        var config = SpannerLockProvider.Configuration.builder()
+            .withDatabaseClient(databaseClient)
+            .withTableConfiguration(
+                SpannerLockProvider.TableConfiguration.builder()
+                    // configure custom table and column names here
+                    .build()
+            )
+            .withHostName("customHostName")
+            .build();
+
+        return new SpannerLockProvider(config);
+    }
+    ```
+  </Tab>
+</Tabs>

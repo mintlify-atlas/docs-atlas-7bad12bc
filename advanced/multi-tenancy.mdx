@@ -1,0 +1,96 @@
+---
+title: "Multi-tenancy with ShedLock"
+description: "Implement per-tenant distributed locking in ShedLock by wrapping LockProvider with tenant-aware dispatch logic and ConcurrentHashMap caching."
+---
+
+In multi-tenant applications, you may need separate lock stores per tenant so that a task running for tenant A does not block tenant B. ShedLock supports this through a custom `LockProvider` wrapper.
+
+## Pattern
+
+The recommended approach is an abstract `MultiTenancyLockProvider` that dispatches each lock attempt to a tenant-specific `LockProvider` instance, creating it on first use:
+
+```java
+private static abstract class MultiTenancyLockProvider implements LockProvider {
+    private final ConcurrentHashMap<String, LockProvider> providers = new ConcurrentHashMap<>();
+
+    @Override
+    public Optional<SimpleLock> lock(LockConfiguration lockConfiguration) {
+        String tenantName = getTenantName(lockConfiguration);
+        return providers.computeIfAbsent(tenantName, this::createLockProvider).lock(lockConfiguration);
+    }
+
+    protected abstract LockProvider createLockProvider(String tenantName);
+    protected abstract String getTenantName(LockConfiguration lockConfiguration);
+}
+```
+
+## Implementing the abstract methods
+
+Provide a concrete subclass that resolves the tenant identity and constructs the appropriate provider. A common approach is to read the tenant from a thread-local context (populated earlier in the request or task dispatch pipeline):
+
+```java
+public class TenantAwareLockProvider extends MultiTenancyLockProvider {
+
+    private final DataSourceProvider dataSourceProvider;
+
+    public TenantAwareLockProvider(DataSourceProvider dataSourceProvider) {
+        this.dataSourceProvider = dataSourceProvider;
+    }
+
+    @Override
+    protected String getTenantName(LockConfiguration lockConfiguration) {
+        // Read from a thread-local set by your tenant-resolution filter/interceptor
+        return TenantContext.getCurrentTenant();
+    }
+
+    @Override
+    protected LockProvider createLockProvider(String tenantName) {
+        DataSource ds = dataSourceProvider.getDataSource(tenantName);
+        return new JdbcTemplateLockProvider(
+            JdbcTemplateLockProvider.Configuration.builder()
+                .withJdbcTemplate(new JdbcTemplate(ds))
+                .usingDbTime()
+                .build()
+        );
+    }
+}
+```
+
+Alternatively, embed the tenant name in the lock name by convention (e.g., `tenant1:myTask`) and parse it out in `getTenantName`:
+
+```java
+@Override
+protected String getTenantName(LockConfiguration lockConfiguration) {
+    // Lock names follow the convention "tenantName:taskName"
+    return lockConfiguration.getName().split(":")[0];
+}
+```
+
+## Caching
+
+The `ConcurrentHashMap` in `MultiTenancyLockProvider` is an in-memory cache of provider instances, keyed by tenant name. Provider instances are created once per tenant per application lifetime — they are never evicted. This is generally appropriate since the set of tenants in a running application is stable, but keep it in mind if your tenant set is very large or highly dynamic.
+
+## Multiple LockProviders with @LockProviderToUse
+
+For simpler scenarios where the set of providers is fixed and known at startup, you can define multiple `LockProvider` beans and annotate each task with `@LockProviderToUse` to select which bean to use (available since Spring integration 6.0.0):
+
+```java
+// Two named lock provider beans
+@Bean("primaryLockProvider")
+public LockProvider primaryLockProvider(...) { ... }
+
+@Bean("secondaryLockProvider")
+public LockProvider secondaryLockProvider(...) { ... }
+```
+
+```java
+// On a method
+@Scheduled(...)
+@SchedulerLock(name = "myTask")
+@LockProviderToUse("secondaryLockProvider")
+public void myTask() { ... }
+```
+
+`@LockProviderToUse` can be placed at the method, class, or package level. If the annotation is not found at any level, the execution fails at runtime (not at startup).
+
+For dynamic provider selection based on runtime state, use the `MultiTenancyLockProvider` wrapper pattern instead.

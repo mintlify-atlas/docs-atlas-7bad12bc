@@ -1,0 +1,82 @@
+---
+title: "Compatibility matrix"
+description: "ShedLock version compatibility with Java, Spring Framework, Spring Boot, and Micronaut versions across the 1.x through 7.x release lines."
+---
+
+ShedLock follows a versioned compatibility matrix. Use this table to pick the right ShedLock version for your framework and JVM version.
+
+## Version compatibility
+
+| ShedLock version | Minimal JVM version | Tested with |
+|---|---|---|
+| 7.x.x | 17 | Spring 7.0, 6.2 / Spring Boot 4.x, 3.5, 3.4 / Micronaut 4 |
+| 6.x.x | 17 | Spring 6.2, 6.1 / Spring Boot 3.5, 3.4, 3.3 / Micronaut 4 |
+| 5.x.x | 17 | Spring 6.1, 6.0 / Spring Boot 3.4, 3.3, 3.2 / Micronaut 3, 4 |
+| 4.x.x | 8 | Spring 6.0, 5.3 / Spring Boot 3.0, 2.7, 2.6 |
+| 3.x.x | 8 | Spring 5.2, 5.1 / Spring Boot 2.2, 2.1 |
+| 2.x.x | 8 | Spring 5.1, 5.0 / Spring Boot 2.1 |
+| 1.x.x | 8 | Spring 5.0 / Spring Boot 2.0 |
+
+ShedLock may work with additional versions — this table shows what was tested.
+
+<Note>
+The current stable version is **7.7.0** (Maven groupId: `net.javacrumbs.shedlock`).
+</Note>
+
+## BOM dependency
+
+Use the ShedLock BOM to manage versions consistently across all ShedLock modules:
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-bom</artifactId>
+    <version>7.7.0</version>
+    <type>pom</type>
+    <scope>import</scope>
+</dependency>
+```
+
+## Recent releases
+
+The following are the 10 most recent ShedLock releases.
+
+### 7.7.0 (2026-03-17)
+
+Support for Micrometer metrics. Adds `MicrometerLockingTaskExecutorListener` for publishing lock acquisition counters and execution timers to any Micrometer-compatible registry.
+
+### 7.6.0 (2026-01-27)
+
+Customizable document field names for Elasticsearch 9 and OpenSearch providers, allowing teams to map ShedLock fields to existing index schemas.
+
+### 7.5.0 (2025-12-27)
+
+Support for Google Cloud Storage (GCS) as a lock provider backend.
+
+### 7.4.0 (2025-12-18)
+
+BOM no longer includes JUnit as a managed dependency, preventing version conflicts in test classpaths.
+
+### 7.3.0 (2025-12-16)
+
+Support for CockroachDB through the existing JDBC infrastructure.
+
+### 7.2.2 (2025-12-11)
+
+Fixed `R2dbcLockProvider` to work correctly inside WebFlux controllers.
+
+### 7.2.1 (2025-12-01)
+
+Improved handling of `@Primary`-annotated `LockProvider` beans to resolve ambiguity in multi-provider configurations.
+
+### 7.2.0 (2025-11-23)
+
+NATS JetStream lock provider added, using a Key-Value store for lock coordination.
+
+### 7.1.0 (2025-11-19)
+
+Fixed position of `@Nullable` annotations for correct nullability analysis. Exposed MS SQL Server lock provider updated to use `SYSUTCDATETIME`.
+
+### 7.0.0 (2025-11-16)
+
+Major release. Unified capabilities for all SQL-based lock providers (custom table and column names, DB time). OpenSearch client upgraded to 3.3.0. Removed Consul, Elasticsearch 8, and S3 v1 providers. Added Spring 7 support, JSpecify annotations, and JPMS module support.

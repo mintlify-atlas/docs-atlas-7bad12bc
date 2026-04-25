@@ -1,0 +1,59 @@
+---
+title: "Micrometer metrics integration"
+description: "Monitor ShedLock lock acquisition, execution duration, and concurrent task counts by integrating the shedlock-micrometer module with your MeterRegistry."
+---
+
+ShedLock integrates with [Micrometer](https://micrometer.io/) to publish lock and execution metrics. This lets you track lock contention, execution duration, and active task counts in any Micrometer-compatible monitoring system (Prometheus, Datadog, CloudWatch, etc.).
+
+## Add the dependency
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-micrometer</artifactId>
+    <version>${shedlock.version}</version>
+</dependency>
+```
+
+## Configure the listener bean
+
+Define a `MicrometerLockingTaskExecutorListener` bean in your Spring application context. ShedLock's Spring integration detects it automatically — no further wiring is required.
+
+```java
+@Bean
+public LockingTaskExecutorListener micrometerLockingTaskExecutorListener(MeterRegistry meterRegistry) {
+    return new MicrometerLockingTaskExecutorListener(meterRegistry);
+}
+```
+
+## Available metrics
+
+All meters are registered lazily on first use and are tagged with `lock.name` to allow per-task filtering in dashboards.
+
+| Meter name | Type | Description |
+|---|---|---|
+| `shedlock.lock.attempts` | Counter | Total lock acquisition attempts |
+| `shedlock.lock.acquired` | Counter | Successful lock acquisitions |
+| `shedlock.lock.not.acquired` | Counter | Failed lock acquisitions (lock held elsewhere) |
+| `shedlock.execution.duration` | Timer | Task execution time |
+| `shedlock.execution.active` | Gauge | Number of currently executing tasks |
+
+## Pre-registering metrics
+
+By default, meters are only registered when a lock attempt is first made. This means dashboards may show gaps or "no data" for tasks that have not yet executed.
+
+To pre-register all meters for known lock names at startup — so dashboards display zero rather than missing data — call `registerMetricsFor`:
+
+```java
+@Bean
+public LockingTaskExecutorListener micrometerLockingTaskExecutorListener(MeterRegistry meterRegistry) {
+    MicrometerLockingTaskExecutorListener listener =
+        new MicrometerLockingTaskExecutorListener(meterRegistry);
+    listener.registerMetricsFor("myLock1", "myLock2");
+    return listener;
+}
+```
+
+<Tip>
+Use the `lock.name` tag to create per-task panels in your monitoring dashboards. For example, in a Prometheus query: `shedlock_lock_acquired_total{lock_name="myLock1"}`.
+</Tip>

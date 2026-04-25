@@ -1,0 +1,68 @@
+---
+title: "MongoDB lock providers"
+description: "Use MongoDB as a ShedLock lock backend with the synchronous MongoLockProvider or the reactive ReactiveStreamsMongoLockProvider for non-blocking applications."
+---
+
+ShedLock provides two MongoDB providers: a synchronous provider built on the standard MongoDB Java driver, and a reactive provider built on MongoDB Reactive Streams. Both store lock documents in a dedicated collection and use MongoDB's atomic operations to coordinate lock acquisition. Choose between them based on whether your application uses blocking or non-blocking I/O.
+
+## Synchronous MongoDB
+
+The synchronous provider works with any application that connects to MongoDB through the standard `com.mongodb.client.MongoClient`.
+
+Add the dependency:
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-mongo</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+Declare the `LockProvider` bean:
+
+```java
+import net.javacrumbs.shedlock.provider.mongo.MongoLockProvider;
+
+@Bean
+public LockProvider lockProvider(MongoClient mongo) {
+    return new MongoLockProvider(mongo.getDatabase(databaseName));
+}
+```
+
+**Requirements:**
+- MongoDB server version 2.4 or later
+- `mongo-java-driver` version 3.7.0 or later
+
+## Reactive MongoDB (Reactive Streams)
+
+The reactive provider uses the MongoDB Reactive Streams driver and integrates with reactive application stacks.
+
+Add the dependency:
+
+```xml
+<dependency>
+    <groupId>net.javacrumbs.shedlock</groupId>
+    <artifactId>shedlock-provider-mongo-reactivestreams</artifactId>
+    <version>7.7.0</version>
+</dependency>
+```
+
+Declare the `LockProvider` bean:
+
+```java
+import net.javacrumbs.shedlock.provider.mongo.reactivestreams.ReactiveStreamsMongoLockProvider;
+
+@Bean
+public LockProvider lockProvider(com.mongodb.reactivestreams.client.MongoClient mongo) {
+    return new ReactiveStreamsMongoLockProvider(mongo.getDatabase(databaseName));
+}
+```
+
+**Requirements:**
+- MongoDB server version 4.x or later
+- `mongodb-driver-reactivestreams` version 1.x
+
+<Tip>
+  ShedLock creates the lock collection automatically on first use, defaulting to a collection named `shedLock`. It also creates the necessary index on the lock name field. You do not need to create the collection or index manually, but make sure the MongoDB user your application connects with has permission to create collections and indexes in the target database.
+</Tip>

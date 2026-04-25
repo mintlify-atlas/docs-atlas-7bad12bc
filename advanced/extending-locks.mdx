@@ -1,0 +1,57 @@
+---
+title: "Extending and keeping locks alive"
+description: "Use LockExtender to manually extend a held lock mid-execution, or wrap your provider with KeepAliveLockProvider to automatically renew long-running task locks."
+---
+
+Some tasks run longer than their initial lock duration. ShedLock provides two mechanisms for handling this: manual extension via `LockExtender` and automatic renewal via `KeepAliveLockProvider`.
+
+## Manual extension with LockExtender
+
+When a task knows it needs more time, it can explicitly request an extension of the currently held lock:
+
+```java
+LockExtender.extendActiveLock(Duration.ofMinutes(5), Duration.ZERO);
+```
+
+The two parameters are:
+
+- **`extendBy`** — how much additional time to add to the lock's expiry from now.
+- **`lockAtLeastFor`** — the minimum remaining time the lock should be held (analogous to `lockAtLeastFor` on `@SchedulerLock`). Pass `Duration.ZERO` if you do not need a minimum.
+
+`LockExtender` operates on the lock held by the currently executing thread. It must be called from within a locked task.
+
+<Warning>
+Not all lock provider implementations support lock extension. Check your provider's documentation before relying on this feature.
+</Warning>
+
+## KeepAliveLockProvider
+
+`KeepAliveLockProvider` wraps an existing lock provider and automatically extends the lock at the midpoint of the `lockAtMostFor` interval, repeating indefinitely until the lock is released.
+
+For example, if `lockAtMostFor` is 10 minutes, the lock is extended every 5 minutes — each time resetting the expiry back to 10 minutes — until the task finishes and releases the lock.
+
+Configure it by wrapping your existing provider:
+
+```java
+@Bean
+public LockProvider lockProvider(TaskScheduler scheduler) {
+    return new KeepAliveLockProvider(new XyzProvider(...), scheduler);
+}
+```
+
+The `scheduler` parameter is a `TaskScheduler` used only for scheduling the periodic extension. A single-threaded scheduler is sufficient.
+
+**Constraints:**
+- The minimum `lockAtMostFor` supported by `KeepAliveLockProvider` is **30 seconds**.
+- The underlying provider must support lock extension.
+
+## When to use each
+
+| Mechanism | Best for |
+|---|---|
+| `LockExtender` | Tasks with predictable phases — you know at a specific point that you need N more minutes. |
+| `KeepAliveLockProvider` | Truly long-running tasks where total duration is unknown ahead of time. |
+
+<Warning>
+`KeepAliveLockProvider` adds meaningful complexity to the locking flow and makes behavior harder to reason about. Use it sparingly and only when the task duration genuinely cannot be bounded.
+</Warning>

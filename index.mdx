@@ -1,133 +1,63 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
-icon: 'star'
+title: "ShedLock: Distributed Lock for Scheduled Tasks"
+description: "ShedLock ensures your scheduled tasks run at most once simultaneously across multiple nodes, using an external store for coordination."
 ---
 
-## Setting up
+ShedLock is a Java library that prevents your scheduled tasks from running concurrently across multiple application instances. When one node acquires a lock and starts executing a task, all other nodes skip that execution — ensuring exactly-once behavior in distributed environments.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Add ShedLock to your Spring app and lock your first scheduled task in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="How It Works" icon="lightbulb" href="/how-it-works">
+    Understand the locking model, time-based expiry, and coordination guarantees.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Lock Providers" icon="database" href="/providers/overview">
+    Choose from 20+ backends: JDBC, MongoDB, Redis, DynamoDB, Cassandra, and more.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Spring Integration" icon="leaf" href="/integration/spring">
+    Configure @EnableSchedulerLock and annotate tasks with @SchedulerLock.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What ShedLock does
 
-Everything you need to create world-class documentation.
+In a horizontally scaled application, every node runs the scheduler. Without coordination, a task scheduled every 15 minutes fires on every node simultaneously. ShedLock solves this by writing a lock record to an external store — the first node to write the record wins, all others skip.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Note>
+ShedLock is **not** a distributed scheduler. It does not queue tasks or delay execution on other nodes — other nodes simply skip the execution. If you need full distributed scheduling, consider [db-scheduler](https://github.com/kagkarlsson/db-scheduler) or [JobRunr](https://www.jobrunr.io/en/).
+</Note>
 
-## Make your content agent ready
+## Get started
 
-Make your docs work for humans and AI agents alike.
+<Steps>
+  <Step title="Add the dependency">
+    Add `shedlock-spring` (or your framework's module) to your Maven or Gradle build.
+  </Step>
+  <Step title="Enable locking">
+    Annotate your Spring configuration with `@EnableSchedulerLock`.
+  </Step>
+  <Step title="Configure a lock provider">
+    Set up a `LockProvider` bean backed by your preferred datastore (JDBC, Redis, MongoDB, etc.).
+  </Step>
+  <Step title="Annotate your tasks">
+    Add `@SchedulerLock(name = "myTask")` to each scheduled method you want to protect.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Prompt component"
-    icon="robot"
-    href="/agent-ready/prompt"
-  >
-    Embed shareable AI prompts readers can copy or open in Cursor.
-  </Card>
-  <Card
-    title="Visibility"
-    icon="eye"
-    href="/agent-ready/visibility"
-  >
-    Show different content to humans and agents reading your docs.
-  </Card>
-  <Card
-    title="Contextual menu"
-    icon="bolt"
-    href="/agent-ready/contextual"
-  >
-    Give readers one-click access to Claude, ChatGPT, Cursor, and more.
-  </Card>
-  <Card
-    title="AI coding tools"
-    icon="wand-magic-sparkles"
-    href="/ai-tools/claude-code"
-  >
-    Set up Claude Code, Cursor, or Windsurf with Mintlify's skill.
-  </Card>
-</Columns>
+## Key features
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="20+ Lock Backends" icon="server" href="/providers/overview">
+    JDBC databases, MongoDB, Redis, Hazelcast, ZooKeeper, DynamoDB, Cassandra, Elasticsearch, and more.
+  </Card>
+  <Card title="Spring, Micronaut & CDI" icon="plug" href="/integration/spring">
+    First-class integrations for Spring Boot, Micronaut, and CDI (Quarkus).
+  </Card>
+  <Card title="Crash-Safe Expiry" icon="shield" href="/advanced/lock-configuration">
+    lockAtMostFor ensures locks are released even if a node crashes mid-execution.
+  </Card>
+  <Card title="Micrometer Metrics" icon="chart-line" href="/advanced/micrometer">
+    Track lock acquisition attempts, successes, failures, and execution durations.
+  </Card>
+</CardGroup>

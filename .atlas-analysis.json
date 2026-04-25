@@ -1,0 +1,98 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "ShedLock",
+  "projectDescription": "A distributed lock library for Java scheduled tasks that ensures each task runs at most once simultaneously across multiple nodes.",
+  "theme": "palm",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "how-it-works"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/spring",
+              "integration/micronaut",
+              "integration/cdi",
+              "integration/standalone"
+            ]
+          },
+          {
+            "group": "Lock Providers",
+            "pages": [
+              "providers/overview",
+              "providers/jdbc",
+              "providers/mongodb",
+              "providers/redis",
+              "providers/nosql",
+              "providers/cloud"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/lock-configuration",
+              "advanced/extending-locks",
+              "advanced/multi-tenancy",
+              "advanced/customization",
+              "advanced/micrometer"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/troubleshooting",
+              "reference/compatibility",
+              "reference/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Ensures scheduled tasks run at most once simultaneously across distributed nodes",
+    "Supports 20+ lock provider backends (JDBC, MongoDB, Redis, Hazelcast, ZooKeeper, etc.)",
+    "First-class Spring integration via @EnableSchedulerLock and @SchedulerLock annotations",
+    "Micronaut and CDI (Quarkus) framework support",
+    "Time-based lock expiry (lockAtMostFor) for crash safety",
+    "Minimum lock duration (lockAtLeastFor) to prevent rapid re-execution",
+    "Lock extension support via LockExtender and KeepAliveLockProvider",
+    "Multi-tenancy support with custom LockProvider wrappers",
+    "Micrometer metrics integration for observability",
+    "Multiple LockProvider support with @LockProviderToUse disambiguation"
+  ],
+  "publicApiSurface": [
+    "@EnableSchedulerLock(defaultLockAtMostFor, interceptMode)",
+    "@SchedulerLock(name, lockAtMostFor, lockAtLeastFor)",
+    "LockProvider interface",
+    "SimpleLock interface",
+    "LockConfiguration",
+    "LockingTaskExecutor / DefaultLockingTaskExecutor",
+    "LockAssert.assertLocked()",
+    "LockExtender.extendActiveLock()",
+    "KeepAliveLockProvider",
+    "JdbcTemplateLockProvider",
+    "MongoLockProvider",
+    "RedisLockProvider / ReactiveRedisLockProvider / JedisLockProvider / LettuceLockProvider",
+    "DynamoDBLockProvider",
+    "ZookeeperCuratorLockProvider",
+    "HazelcastLockProvider",
+    "CassandraLockProvider",
+    "R2dbcLockProvider",
+    "InMemoryLockProvider",
+    "MicrometerLockingTaskExecutorListener",
+    "@LockProviderToUse"
+  ]
+}

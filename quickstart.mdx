@@ -1,81 +1,169 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
-icon: 'rocket'
+title: "Get started with ShedLock"
+description: "Add distributed locking to your Spring Boot scheduled tasks in four steps using ShedLock with a JDBC database or Redis as the lock provider backend."
 ---
 
-## Get started in three steps
+ShedLock prevents your Spring scheduled tasks from running concurrently across multiple application nodes. This guide walks you through adding it to a Spring Boot application backed by a relational database. The entire setup takes four steps: add the dependency, enable locking in your configuration, create a `LockProvider` bean, and annotate the tasks you want to protect.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
+  <Step title="Add the Maven dependency">
+    Add `shedlock-spring` to your `pom.xml`. This is the only dependency required for the Spring integration itself; you will also add a lock provider dependency in step 3.
 
-### Step 1: Set up your local environment
+    ```xml
+    <dependency>
+        <groupId>net.javacrumbs.shedlock</groupId>
+        <artifactId>shedlock-spring</artifactId>
+        <version>7.7.0</version>
+    </dependency>
+    ```
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Enable scheduler lock">
+    Add `@EnableSchedulerLock` to your Spring configuration class alongside the existing `@EnableScheduling` annotation. The `defaultLockAtMostFor` value sets how long a lock is held if the node holding it crashes before releasing it.
 
-### Step 2: Deploy your changes
+    ```java
+    import net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock;
+    import org.springframework.context.annotation.Configuration;
+    import org.springframework.scheduling.annotation.EnableScheduling;
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    @Configuration
+    @EnableScheduling
+    @EnableSchedulerLock(defaultLockAtMostFor = "10m")
+    public class SchedulerConfiguration {
+        // other beans
+    }
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Configure a LockProvider bean">
+    ShedLock needs an external store to coordinate locks across nodes. Add the provider dependency and declare a `LockProvider` bean.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    <Tabs>
+      <Tab title="JDBC (recommended)">
+        First, create the `shedlock` table in your database. The `name` column must be the primary key.
 
-### Step 3: Go live
+        ```sql
+        -- MySQL / MariaDB
+        CREATE TABLE shedlock(
+            name        VARCHAR(64)   NOT NULL,
+            lock_until  TIMESTAMP(3)  NOT NULL,
+            locked_at   TIMESTAMP(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+            locked_by   VARCHAR(255)  NOT NULL,
+            PRIMARY KEY (name)
+        );
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+        -- Postgres
+        CREATE TABLE shedlock(
+            name        VARCHAR(64)  NOT NULL,
+            lock_until  TIMESTAMP    NOT NULL,
+            locked_at   TIMESTAMP    NOT NULL,
+            locked_by   VARCHAR(255) NOT NULL,
+            PRIMARY KEY (name)
+        );
+        ```
+
+        Add the JDBC provider dependency:
+
+        ```xml
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>7.7.0</version>
+        </dependency>
+        ```
+
+        Declare the `LockProvider` bean:
+
+        ```java
+        import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
+        import org.springframework.jdbc.core.JdbcTemplate;
+        import javax.sql.DataSource;
+
+        @Bean
+        public LockProvider lockProvider(DataSource dataSource) {
+            return new JdbcTemplateLockProvider(
+                JdbcTemplateLockProvider.Configuration.builder()
+                    .withJdbcTemplate(new JdbcTemplate(dataSource))
+                    .usingDbTime()
+                    .build()
+            );
+        }
+        ```
+
+        <Tip>
+          Always use `.usingDbTime()`. It makes ShedLock use the database server's clock instead of the application server's clock, which eliminates locking failures caused by clock drift between nodes. It also uses database-engine-specific SQL that prevents INSERT conflicts.
+        </Tip>
+      </Tab>
+      <Tab title="Redis">
+        Add the Redis provider dependency:
+
+        ```xml
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-redis-spring</artifactId>
+            <version>7.7.0</version>
+        </dependency>
+        ```
+
+        Declare the `LockProvider` bean:
+
+        ```java
+        import net.javacrumbs.shedlock.provider.redis.spring.RedisLockProvider;
+        import org.springframework.data.redis.connection.RedisConnectionFactory;
+
+        @Bean
+        public LockProvider lockProvider(RedisConnectionFactory connectionFactory) {
+            return new RedisLockProvider(connectionFactory, "production");
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Annotate your scheduled tasks">
+    Add `@SchedulerLock` to each method you want to protect. Only methods annotated with `@SchedulerLock` are locked — ShedLock ignores all other `@Scheduled` methods.
+
+    ```java
+    import net.javacrumbs.shedlock.core.LockAssert;
+    import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+    import org.springframework.scheduling.annotation.Scheduled;
+    import org.springframework.stereotype.Component;
+
+    @Component
+    public class ReportingTask {
+
+        @Scheduled(cron = "0 */15 * * * *")
+        @SchedulerLock(name = "reportingTask", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+        public void generateReport() {
+            // Assert that the lock is held — catches AOP misconfiguration early
+            LockAssert.assertLocked();
+
+            // task logic here
+        }
+    }
+    ```
+
+    <Warning>
+      Set `lockAtMostFor` to a value significantly longer than the maximum expected execution time. If a task runs longer than `lockAtMostFor`, the lock expires and another node may start the same task concurrently, producing unpredictable results. The default value from `@EnableSchedulerLock` is used when `lockAtMostFor` is not specified on the annotation.
+    </Warning>
+  </Step>
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Your Spring Boot application is now protected against concurrent task execution. Explore more lock provider options and advanced configuration:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="All lock providers" icon="database" href="/providers/overview">
+    Browse the full list of supported backends including MongoDB, DynamoDB, Hazelcast, Cassandra, and more.
+  </Card>
+  <Card title="How it works" icon="lightbulb" href="/how-it-works">
+    Learn about the locking model, lock record structure, and the role of `lockAtMostFor` vs `lockAtLeastFor`.
+  </Card>
+  <Card title="Spring integration details" icon="leaf" href="/integration/spring">
+    Configure multiple lock providers, TaskScheduler proxy mode, and Micrometer metrics.
+  </Card>
+  <Card title="Lock configuration" icon="sliders" href="/advanced/lock-configuration">
+    Duration formats, SpEL expressions, and per-task lock provider selection.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

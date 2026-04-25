@@ -1,0 +1,114 @@
+---
+title: "Using ShedLock without a framework"
+description: "Run ShedLock without Spring, Micronaut, or CDI by using DefaultLockingTaskExecutor and LockConfiguration to apply distributed locks programmatically."
+---
+
+ShedLock can be used without any framework integration. Instead of relying on AOP proxies and annotations, you use `DefaultLockingTaskExecutor` directly to wrap a `Runnable` or `Callable` with a distributed lock. This approach is useful in plain Java applications, in custom scheduling setups, or in tests where you want to exercise the locking logic without wiring a full framework.
+
+## Basic usage
+
+Create a `DefaultLockingTaskExecutor` with any configured `LockProvider`, then call `executeWithLock` with your task and a `LockConfiguration`:
+
+```java
+import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
+import net.javacrumbs.shedlock.core.LockConfiguration;
+import net.javacrumbs.shedlock.core.LockingTaskExecutor;
+
+import java.time.Duration;
+import java.time.Instant;
+
+LockingTaskExecutor executor = new DefaultLockingTaskExecutor(lockProvider);
+
+Instant createdAt = Instant.now();
+Duration lockAtMostFor = Duration.ofSeconds(60);
+Duration lockAtLeastFor = Duration.ZERO;
+
+executor.executeWithLock(
+    () -> {
+        // your task logic here
+    },
+    new LockConfiguration(createdAt, "lockName", lockAtMostFor, lockAtLeastFor)
+);
+```
+
+If the lock cannot be acquired (because another node holds it), the task is skipped — it is never called. `executeWithLock` returns normally in both cases.
+
+## `LockConfiguration` parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `createdAt` | `Instant` | The time the lock configuration was created. Pass `Instant.now()`. Used internally to compute lock expiry timestamps. |
+| `name` | `String` | The lock name. Must be unique across all tasks you want to protect. Used as the primary key in the lock store. |
+| `lockAtMostFor` | `Duration` | Maximum time the lock is held. If the node executing the task crashes before finishing, the lock expires after this duration so other nodes can proceed. Set this well above the maximum expected execution time. |
+| `lockAtLeastFor` | `Duration` | Minimum time the lock is held, even if the task finishes faster. Use `Duration.ZERO` if you do not need this guarantee. |
+
+## Complete example
+
+The following example shows a self-contained setup using the in-memory lock provider, which is useful for testing or single-node use:
+
+```java
+import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
+import net.javacrumbs.shedlock.core.LockConfiguration;
+import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.core.LockingTaskExecutor;
+import net.javacrumbs.shedlock.provider.inmemory.InMemoryLockProvider;
+
+import java.time.Duration;
+import java.time.Instant;
+
+public class StandaloneExample {
+
+    public static void main(String[] args) throws Throwable {
+        LockProvider lockProvider = new InMemoryLockProvider();
+        LockingTaskExecutor executor = new DefaultLockingTaskExecutor(lockProvider);
+
+        executor.executeWithLock(
+            StandaloneExample::runTask,
+            new LockConfiguration(
+                Instant.now(),
+                "standaloneTask",
+                Duration.ofMinutes(5),
+                Duration.ZERO
+            )
+        );
+    }
+
+    private static void runTask() {
+        System.out.println("Task executing with lock held");
+    }
+}
+```
+
+For production use, replace `InMemoryLockProvider` with a provider backed by a shared external store. See [Lock providers](/providers/overview) for all available options.
+
+## When to use standalone mode
+
+Standalone mode is the right choice when:
+
+- You are writing a **non-Spring, non-Micronaut, non-CDI** application and still need distributed locking.
+- You need to lock an operation that is **not a scheduled task** — for example, a background thread started manually or a job triggered by an event.
+- You are writing **unit or integration tests** that need to exercise locking behavior without a full framework context.
+- You need **custom scheduling logic** that does not fit the annotation-driven model.
+
+## Long-running tasks and `KeepAliveLockProvider`
+
+If your task runs for a long time and you are concerned that `lockAtMostFor` might expire before the task finishes, you can wrap your `LockProvider` with `KeepAliveLockProvider`. It periodically extends the lock in the background while the task executes.
+
+```java
+import net.javacrumbs.shedlock.support.KeepAliveLockProvider;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+
+ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+LockProvider keepAliveLockProvider = new KeepAliveLockProvider(lockProvider, scheduler);
+
+LockingTaskExecutor executor = new DefaultLockingTaskExecutor(keepAliveLockProvider);
+```
+
+`KeepAliveLockProvider` extends the lock at the midpoint of the `lockAtMostFor` interval. For example, if `lockAtMostFor` is 10 minutes, the lock is extended every 5 minutes for another 10 minutes until the task completes. The minimum supported `lockAtMostFor` value is 30 seconds.
+
+<Note>
+  Use `KeepAliveLockProvider` only when necessary. It adds complexity and makes the locking flow harder to reason about. Prefer setting a generous `lockAtMostFor` value and using it only as a safety net.
+</Note>
+
+For more details on lock extension, see [Extending locks](/advanced/extending-locks).

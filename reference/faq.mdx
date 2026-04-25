@@ -1,0 +1,144 @@
+---
+title: "Frequently asked questions"
+description: "Answers to common questions about ShedLock's locking model, provider selection, task behavior, Spring AOP, Kotlin support, and testing."
+---
+
+These are the most frequently asked questions about ShedLock based on real-world usage patterns.
+
+<AccordionGroup>
+  <Accordion title="Is ShedLock a distributed scheduler?">
+    No. ShedLock is a distributed lock, not a distributed scheduler. When a task is being executed on one node, other nodes that attempt to run the same task skip it — they do not queue or wait.
+
+    If you need a full distributed scheduler with job queuing and guaranteed execution, consider [db-scheduler](https://github.com/kagkarlsson/db-scheduler) or [JobRunr](https://www.jobrunr.io/en/).
+
+    ShedLock is designed for scheduled tasks that are safe to execute repeatedly but must not run in parallel.
+  </Accordion>
+
+  <Accordion title="What happens if the node holding the lock crashes?">
+    The lock expires automatically after `lockAtMostFor` elapses. Once expired, another node can acquire the lock and execute the task.
+
+    This is why `lockAtMostFor` should be set to a value significantly larger than the maximum expected execution time — it acts as a safety net for crashed nodes, not a target duration.
+  </Accordion>
+
+  <Accordion title="Can I use ShedLock without Spring?">
+    Yes. ShedLock can be used without any framework by using `DefaultLockingTaskExecutor` directly:
+
+    ```java
+    LockingTaskExecutor executor = new DefaultLockingTaskExecutor(lockProvider);
+
+    Instant createdAt = Instant.now();
+    Duration lockAtMostFor = Duration.ofSeconds(60);
+    Duration lockAtLeastFor = Duration.ZERO;
+
+    executor.executeWithLock(
+        runnable,
+        new LockConfiguration(createdAt, "lockName", lockAtMostFor, lockAtLeastFor)
+    );
+    ```
+
+    ShedLock also has Micronaut and CDI integrations for non-Spring environments.
+  </Accordion>
+
+  <Accordion title="Which lock provider should I choose?">
+    Choose based on what infrastructure you already have:
+
+    - **JdbcTemplate** — Recommended if you already have a relational database. Mature, well-tested, and supports `usingDbTime()` to avoid clock drift issues.
+    - **Redis** — Good choice if you need low-latency coordination and already run Redis. Note that Redis lock reliability depends on your replication setup.
+    - **Memcached** — Avoid if possible. Memcached may evict lock entries under memory pressure before they expire, which can cause concurrent execution.
+    - **Elasticsearch** — Avoid unless you have no other option. It is not designed for coordination workloads.
+
+    For any provider, prefer one that is already part of your infrastructure to avoid adding operational complexity.
+  </Accordion>
+
+  <Accordion title="Why shouldn't I delete rows from the shedlock table?">
+    ShedLock maintains an in-memory cache of known lock rows. If you delete a row from the database, ShedLock will not recreate it until the application restarts.
+
+    If you need to reset a lock, **edit the row** rather than deleting it — for example, set `lock_until` to a past timestamp. This risks only a brief window where multiple nodes could hold the lock simultaneously, which is far less disruptive than a broken cache state.
+  </Accordion>
+
+  <Accordion title="Can multiple tasks share a lock?">
+    Yes. If two tasks are annotated with the same `name` value in `@SchedulerLock`, they share a single lock. Only one of them can run at a time — whichever acquires the lock first will execute, and the other will be skipped.
+
+    This can be useful when you want to prevent two different task types from running concurrently.
+  </Accordion>
+
+  <Accordion title="Does @SchedulerLock apply when calling the method directly?">
+    Yes, in `PROXY_METHOD` mode (the default since version 4.0.0), the lock is applied even when you call the annotated method directly from other code — not just when the scheduler invokes it.
+
+    If the lock is held by another process when you call the method directly, the method will return `null` or an empty `Optional` (primitive return types are not supported in this case).
+  </Accordion>
+
+  <Accordion title="How do I test code that uses ShedLock?">
+    There are two recommended approaches for testing:
+
+    **Disable lock assertions** — Call `LockAssert.TestHelper.makeAllAssertsPass(true)` on the test thread to make all `LockAssert.assertLocked()` calls pass without actually holding a lock:
+
+    ```java
+    @BeforeEach
+    void setUp() {
+        LockAssert.TestHelper.makeAllAssertsPass(true);
+    }
+    ```
+
+    **Use InMemoryLockProvider** — Replace your production `LockProvider` bean with `InMemoryLockProvider` in tests. This avoids any external dependencies while preserving realistic locking behavior:
+
+    ```java
+    @Bean
+    public LockProvider lockProvider() {
+        return new InMemoryLockProvider();
+    }
+    ```
+
+    The `shedlock-provider-inmemory` module is available for this purpose and should be scoped to `test`.
+  </Accordion>
+
+  <Accordion title="Does ShedLock work with Kotlin?">
+    Yes, ShedLock is tested with Kotlin. The main thing to be aware of is that Spring AOP cannot proxy `final` methods, and Kotlin methods are `final` by default.
+
+    If your scheduled class is annotated with `@Component` (or `@Service`, `@Repository`, etc.), the Kotlin Spring compiler plugin will automatically open the methods for AOP proxying — no additional configuration is needed.
+
+    If `@Component` is not present, you must explicitly mark the scheduled method as `open`:
+
+    ```kotlin
+    @Scheduled(fixedDelay = 1000)
+    @SchedulerLock(name = "myTask")
+    open fun myTask() {
+        LockAssert.assertLocked()
+        // do something
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="What is the minimum lockAtMostFor for KeepAliveLockProvider?">
+    The minimum `lockAtMostFor` value supported by `KeepAliveLockProvider` is **30 seconds**.
+
+    `KeepAliveLockProvider` extends the lock at the midpoint of the `lockAtMostFor` interval. For example, with a 10-minute `lockAtMostFor`, the lock is extended every 5 minutes until the task completes. This ensures the lock does not expire prematurely for long-running tasks.
+
+    ```java
+    @Bean
+    public LockProvider lockProvider(LockProvider delegate, TaskScheduler scheduler) {
+        return new KeepAliveLockProvider(delegate, scheduler);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Can I use multiple lock providers?">
+    Yes, since version 6.0.0. Define multiple `LockProvider` beans in your application context and use `@LockProviderToUse("beanName")` on the method, class, or package to specify which provider to use:
+
+    ```java
+    @SchedulerLock(name = "myTask")
+    @LockProviderToUse("redisLockProvider")
+    public void myTask() {
+        LockAssert.assertLocked();
+    }
+    ```
+
+    If `@LockProviderToUse` is not found at runtime, the execution fails at runtime rather than at startup. For more dynamic resolution, use a wrapper `LockProvider` as described in the multi-tenancy pattern.
+  </Accordion>
+
+  <Accordion title="What Spring XML configuration is supported?">
+    None. XML configuration support was removed in version 3.0.0.
+
+    If you need XML-based Spring configuration, use ShedLock version 2.6.0 or earlier. For all newer versions, use Java-based `@Configuration` classes.
+  </Accordion>
+</AccordionGroup>

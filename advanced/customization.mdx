@@ -1,0 +1,69 @@
+---
+title: "Customizing ShedLock behavior"
+description: "Extend or wrap the LockProvider interface to add custom logging, alerting, metrics, or conditional locking behavior without modifying ShedLock internals."
+---
+
+ShedLock's `LockProvider` interface is the primary extension point. By wrapping an existing provider, you can add custom logic — logging, alerting, metrics, or conditional locking — without modifying ShedLock's internals.
+
+## Custom LockProvider wrapper
+
+The decorator pattern lets you intercept every lock attempt and react to success or failure:
+
+```java
+public class MyLockProvider implements LockProvider {
+    private final LockProvider delegate;
+
+    public MyLockProvider(LockProvider delegate) {
+        this.delegate = delegate;
+    }
+
+    @Override
+    public Optional<SimpleLock> lock(LockConfiguration lockConfiguration) {
+        Optional<SimpleLock> lock = delegate.lock(lockConfiguration);
+        if (lock.isPresent()) {
+            // do something after lock is acquired
+        }
+        return lock;
+    }
+}
+```
+
+Register it as a Spring bean by wrapping the real provider:
+
+```java
+@Bean
+public LockProvider lockProvider(DataSource dataSource) {
+    LockProvider real = new JdbcTemplateLockProvider(
+        JdbcTemplateLockProvider.Configuration.builder()
+            .withJdbcTemplate(new JdbcTemplate(dataSource))
+            .usingDbTime()
+            .build()
+    );
+    return new MyLockProvider(real);
+}
+```
+
+## TrackingLockProviderWrapper
+
+ShedLock ships a built-in reference implementation called `TrackingLockProviderWrapper`. It demonstrates the decorator pattern with proper handling of both the lock-acquisition and lock-release lifecycle. Review its source as a starting point when building your own wrapper.
+
+## Common customization use cases
+
+- **Logging** — log which lock was acquired, by which node, and whether acquisition succeeded or failed.
+- **Publishing events** — fire application events (e.g., Spring `ApplicationEvent`) on lock acquisition or release, so other components can react.
+- **Conditional locking** — skip locking for specific tasks based on a feature flag or configuration, returning `Optional.empty()` without delegating.
+- **Circuit breaker** — prevent lock attempts when the backing store is known to be unavailable, avoiding thundering-herd reconnection storms.
+- **Metrics** — record custom counters or histograms. (For Micrometer-based metrics, see the [Micrometer integration](/advanced/micrometer) page instead.)
+
+## SimpleLock interface
+
+`Optional<SimpleLock>` is what `LockProvider.lock()` returns when a lock is successfully acquired. The `SimpleLock` interface has two methods:
+
+- **`unlock()`** — releases the lock. Called automatically by ShedLock after the task completes.
+- **`extendLock(Instant lockAtMostUntil, Instant lockAtLeastUntil)`** — extends the lock's expiry times. Not all providers implement this; unsupported providers throw `UnsupportedOperationException`.
+
+If you wrap `SimpleLock` in a custom decorator (to intercept `unlock()` or `extendLock()`), make sure your wrapper delegates faithfully to avoid lock leaks.
+
+<Tip>
+If your goal is keeping the lock alive for long-running tasks, prefer `KeepAliveLockProvider` over a custom `SimpleLock` wrapper. See [Extending and keeping locks alive](/advanced/extending-locks) for details.
+</Tip>

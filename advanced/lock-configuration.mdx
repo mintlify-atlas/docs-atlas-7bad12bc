@@ -1,0 +1,96 @@
+---
+title: "Lock configuration reference"
+description: "Reference for lockAtMostFor, lockAtLeastFor, lock names, and duration formats used in ShedLock's @SchedulerLock and @EnableSchedulerLock annotations."
+---
+
+ShedLock's locking behavior is controlled through a handful of configuration attributes on `@SchedulerLock` and `@EnableSchedulerLock`. Getting these values right is critical to both correctness and resilience.
+
+## lockAtMostFor
+
+`lockAtMostFor` defines the maximum time a lock is held, even if the node executing the task crashes or becomes unresponsive. It is a safety net, not a timeout for your task.
+
+**You must set `lockAtMostFor` to a value significantly larger than the maximum expected execution time.** If a task runs longer than `lockAtMostFor`, the lock expires and another node may acquire it, meaning two nodes will effectively hold the lock simultaneously — leading to unpredictable behavior.
+
+```java
+@Scheduled(cron = "0 */15 * * * *")
+@SchedulerLock(name = "myTask", lockAtMostFor = "14m")
+public void scheduledTask() {
+    // do something
+}
+```
+
+If `lockAtMostFor` is not set on `@SchedulerLock`, the default value from `@EnableSchedulerLock` is used.
+
+## lockAtLeastFor
+
+`lockAtLeastFor` specifies the minimum time the lock is held after the task completes. By default, the lock is released immediately when the task finishes.
+
+This attribute exists to prevent a task from being re-executed too soon on another node when:
+- The task completes very quickly, and
+- There is a clock difference between nodes that is larger than the task's execution time.
+
+```java
+@Scheduled(cron = "0 */15 * * * *")
+@SchedulerLock(name = "myTask", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+public void scheduledTask() {
+    // do something
+}
+```
+
+## Duration format
+
+All duration attributes (`lockAtMostFor`, `lockAtLeastFor`, `defaultLockAtMostFor`) support three formats:
+
+| Format | Example | Notes |
+|---|---|---|
+| `duration+unit` | `1s`, `5ms`, `5m`, `1d` | Available since ShedLock 4.0.0 |
+| Milliseconds as plain integer | `100` | Spring integration only |
+| ISO-8601 | `PT15M` | Parsed via `Duration.parse()` |
+
+All three formats are interchangeable wherever a duration string is accepted.
+
+## Lock name
+
+The `name` attribute on `@SchedulerLock` must be unique per logical task. Any two tasks sharing the same lock name compete for the same lock — only one will execute at a time.
+
+```java
+@SchedulerLock(name = "dailyReportTask")
+public void generateDailyReport() { ... }
+
+@SchedulerLock(name = "weeklyReportTask")
+public void generateWeeklyReport() { ... }
+```
+
+Spring Expression Language (SpEL) is supported in the `name` attribute, allowing dynamic lock names based on method arguments or Spring beans.
+
+## defaultLockAtMostFor
+
+`defaultLockAtMostFor` is set on `@EnableSchedulerLock` and acts as a fallback for all tasks that do not explicitly specify `lockAtMostFor` in their own `@SchedulerLock` annotation.
+
+```java
+@Configuration
+@EnableScheduling
+@EnableSchedulerLock(defaultLockAtMostFor = "10m")
+class MySpringConfiguration {
+    // All @SchedulerLock methods without explicit lockAtMostFor
+    // will use 10 minutes as their safety-net expiry.
+}
+```
+
+## Example: 15-minute task
+
+This is the canonical ShedLock configuration for a task that runs every 15 minutes and normally takes a few minutes to complete, but should never run concurrently across nodes:
+
+```java
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+
+@Scheduled(cron = "0 */15 * * * *")
+@SchedulerLock(name = "scheduledTaskName", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+public void scheduledTask() {
+    // do something
+}
+```
+
+**Why `lockAtMostFor = "14m"`:** If the JVM crashes mid-execution, the lock expires after 14 minutes, well within the 15-minute schedule window, so the next scheduled invocation can acquire the lock normally.
+
+**Why `lockAtLeastFor = "14m"`:** Even if the task finishes in seconds, the lock is held for 14 minutes. This guarantees the task runs at most once per 15-minute window regardless of how fast it completes or how much the clocks on different nodes drift.

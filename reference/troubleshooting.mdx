@@ -1,0 +1,127 @@
+---
+title: "Troubleshooting ShedLock"
+description: "Diagnose and fix common ShedLock issues: tasks running concurrently, locks not releasing, AOP misconfiguration, and empty lock tables."
+---
+
+Most ShedLock problems fall into a small number of categories — AOP misconfiguration, incorrect lock durations, or storage issues. This page walks through the most common issues and how to diagnose them.
+
+## Quick debug checklist
+
+Before diving into specific issues, work through this checklist:
+
+1. Upgrade to the newest version of ShedLock.
+2. Use `LockAssert.assertLocked()` inside your task to verify AOP is configured correctly.
+3. Check the storage — inspect the `shedlock` table and confirm rows are being written.
+4. Enable DEBUG logging:
+
+```properties
+logging.level.net.javacrumbs.shedlock=DEBUG
+```
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Tasks are still running on multiple nodes">
+    If the same task is executing on more than one node simultaneously, work through the following checks:
+
+    - Verify that `@EnableSchedulerLock` is present on your configuration class and that `defaultLockAtMostFor` is set.
+    - Verify that `@SchedulerLock` is present on the scheduled method itself (not just the class).
+    - Check the `shedlock` table. If it is empty, ShedLock is not writing locks — the lock provider is misconfigured or the bean is not being picked up.
+    - Enable DEBUG logging to see lock acquisition attempts:
+
+    ```properties
+    logging.level.net.javacrumbs.shedlock=DEBUG
+    ```
+  </Accordion>
+
+  <Accordion title="Lock table is empty">
+    An empty `shedlock` table means ShedLock is not writing locks at all. Check the following:
+
+    - Both `@EnableScheduling` and `@EnableSchedulerLock` must be present on your configuration class.
+    - A `LockProvider` bean must be defined in the application context. ShedLock will not create one automatically.
+    - Confirm the bean is being discovered — check for component scan issues or missing `@Configuration` annotations.
+  </Accordion>
+
+  <Accordion title="More than one row with the same name">
+    If you see duplicate rows in the `shedlock` table for the same lock name, the table is missing a primary key on the `name` column.
+
+    The `name` column **must** be the primary key. Without it, concurrent inserts from multiple nodes can create duplicate rows and the locking guarantee breaks down.
+
+    Recreate the table with the correct schema:
+
+    ```sql
+    -- Postgres
+    CREATE TABLE shedlock(
+      name VARCHAR(64) NOT NULL,
+      lock_until TIMESTAMP NOT NULL,
+      locked_at TIMESTAMP NOT NULL,
+      locked_by VARCHAR(255) NOT NULL,
+      PRIMARY KEY (name)
+    );
+    ```
+
+    See the [JDBC provider documentation](/providers/jdbc) for the correct DDL for other databases.
+  </Accordion>
+
+  <Accordion title="Tasks seem to be skipped or not running">
+    If a task appears to be skipped regularly, the lock is likely being held longer than expected:
+
+    - Check the `lockAtMostFor` value. If a previous node crashed while holding the lock, the lock stays active until `lockAtMostFor` expires. Other nodes will skip the task until then.
+    - Inspect the `locked_until` column in the database to see when the lock expires.
+    - Set `lockAtMostFor` to a value that is significantly larger than the maximum expected task duration — it is a safety net, not a target duration.
+  </Accordion>
+
+  <Accordion title="AOP not working (LockAssert fails)">
+    If `LockAssert.assertLocked()` throws inside a scheduled method, Spring AOP is not proxying the method correctly.
+
+    Common causes:
+
+    - The method is `final` — Spring AOP cannot proxy final methods. Make scheduled methods non-final.
+    - The method is not `public` — Spring AOP requires public methods for proxy-based interception.
+    - In Kotlin, methods are final by default. Add `@Component` to the class so the Kotlin Spring compiler plugin opens the method automatically. If `@Component` is not present, open the method explicitly with the `open` keyword.
+  </Accordion>
+
+  <Accordion title="Lock is not released after task completes">
+    If you observe that the lock persists in the database after the task has finished, check the `lockAtLeastFor` setting.
+
+    When `lockAtLeastFor` is set, ShedLock keeps the lock held for at least that duration after the task completes — even if the task finishes in milliseconds. This is intentional behavior designed to prevent re-execution within the minimum interval.
+
+    If you do not need a minimum hold time, remove or reduce `lockAtLeastFor`.
+  </Accordion>
+
+  <Accordion title="Clock differences between nodes">
+    ShedLock assumes that clocks on all nodes are synchronized. If clocks drift, tasks may run more than once or be skipped unexpectedly.
+
+    Use `usingDbTime()` on `JdbcTemplateLockProvider` to base all lock timestamps on the database server clock instead of the application server clock:
+
+    ```java
+    @Bean
+    public LockProvider lockProvider(DataSource dataSource) {
+        return new JdbcTemplateLockProvider(
+            JdbcTemplateLockProvider.Configuration.builder()
+                .withJdbcTemplate(new JdbcTemplate(dataSource))
+                .usingDbTime()
+                .build()
+        );
+    }
+    ```
+
+    This is strongly recommended for all JDBC-backed deployments.
+  </Accordion>
+
+  <Accordion title="Short tasks running multiple times">
+    If a very short-running task executes on multiple nodes in rapid succession, the issue is that the lock is released before other nodes have a chance to see it.
+
+    Use `lockAtLeastFor` to guarantee the lock is held for a minimum duration after the task completes:
+
+    ```java
+    @Scheduled(cron = "0 */15 * * * *")
+    @SchedulerLock(name = "myTask", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+    public void scheduledTask() {
+        // do something
+    }
+    ```
+
+    This prevents re-execution within the minimum interval even when clocks differ slightly between nodes.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,91 @@
+---
+title: "How ShedLock works"
+description: "ShedLock uses an external store to coordinate scheduled task execution across nodes, using time-based lock records to prevent concurrent runs."
+---
+
+ShedLock prevents concurrent scheduled task execution by writing a lock record to an external store before a task starts and removing or expiring it when the task finishes. Every node in your cluster competes to write that record, and only the node that succeeds runs the task. Because the coordination happens through an external store rather than in-process signaling, it works correctly across JVM processes, containers, and machines.
+
+## The locking model
+
+When a scheduled task fires, ShedLock intercepts the execution through an AOP proxy and attempts to acquire a lock:
+
+1. The node tries to insert or update a lock record in the external store for the given lock name.
+2. If the write succeeds (no other node holds the lock), the task executes normally. The lock is released as soon as the task completes.
+3. If the write fails (another node already holds the lock), the current execution is **skipped immediately** — it does not block, queue, or retry. The task simply does not run on that node for this scheduled trigger.
+
+This model is intentionally simple: ShedLock adds a coordination gate in front of your task, not a queueing layer behind it.
+
+<Note>
+  Skipped executions are not rescheduled. If a task is skipped because the lock is held, that execution is lost. ShedLock is designed for tasks that are safe to skip — for example, a cleanup job that runs every 15 minutes does not need to catch up on missed runs.
+</Note>
+
+## Lock record structure
+
+For JDBC-backed providers, ShedLock stores one row per lock name in a `shedlock` table. The four columns are:
+
+| Column | Type | Description |
+|---|---|---|
+| `name` | `VARCHAR(64)` PRIMARY KEY | The lock name, unique per protected task. Serves as the primary key, enforcing that only one record exists per lock. |
+| `lock_until` | `TIMESTAMP` | The time at which the lock automatically expires. Set to `now + lockAtMostFor` when the lock is acquired. |
+| `locked_at` | `TIMESTAMP` | The time the lock was most recently acquired. Used for diagnostics and auditing. |
+| `locked_by` | `VARCHAR(255)` | An identifier for the node holding the lock, typically the hostname. Used for diagnostics. |
+
+Non-JDBC providers (Redis, MongoDB, DynamoDB, etc.) store equivalent data in their native formats — a Redis key with a TTL, a MongoDB document, a DynamoDB item.
+
+## Lock lifecycle
+
+The two duration parameters control how long a lock persists:
+
+**`lockAtMostFor`** is a safety net for crashed nodes. When a task starts, the `lock_until` timestamp is set to `now + lockAtMostFor`. If the node running the task dies before the task finishes — and therefore never releases the lock — ShedLock will treat the lock as expired once `lock_until` passes. Other nodes can then acquire it on the next scheduled trigger.
+
+**`lockAtLeastFor`** is a floor for how long the lock is held, even if the task finishes faster. When the task completes, ShedLock sets `lock_until` to whichever is later: `now` or `locked_at + lockAtLeastFor`. This prevents a fast-finishing task from releasing the lock so quickly that another node acquires it in the same scheduling window, which matters when nodes have slightly different clocks.
+
+A typical configuration for a task that fires every 15 minutes:
+
+```java
+@Scheduled(cron = "0 */15 * * * *")
+@SchedulerLock(name = "reportingTask", lockAtMostFor = "14m", lockAtLeastFor = "14m")
+public void generateReport() {
+    LockAssert.assertLocked();
+    // task logic
+}
+```
+
+Setting both values to `14m` means: the lock expires after 14 minutes if the node crashes, and the lock is held for at least 14 minutes even if the task completes in seconds. This ensures the task runs at most once per 15-minute window regardless of clock differences between nodes.
+
+<Warning>
+  `lockAtMostFor` must be set to a value significantly larger than the maximum expected execution time. If a task takes longer than `lockAtMostFor`, the lock expires while the task is still running. Another node then acquires the lock and starts the same task — two instances will be executing concurrently, which defeats the purpose of locking.
+</Warning>
+
+## What happens when a lock is already held
+
+When a task fires on a node and the lock for that task name is already held (i.e., `lock_until` is in the future), ShedLock skips the execution on that node. There is no blocking, no waiting, no queueing. The task method is never called. The node returns normally, and the next scheduled trigger will attempt to acquire the lock again.
+
+This skip-not-block behavior is fundamental to ShedLock's design. It keeps the scheduling loop fast and simple. It also means ShedLock is not suitable for tasks that must run exactly N times in total — only for tasks where concurrent execution is the problem to prevent.
+
+## Clock synchronization
+
+ShedLock's time-based locking assumes that the clocks across nodes are reasonably synchronized. If one node's clock is significantly ahead of another's, the following problems can occur:
+
+- A node with a fast clock may see an expired lock (because its local time is past `lock_until`) and acquire it while the original holder is still executing.
+- A node with a slow clock may hold a lock past the point where others consider it expired.
+
+<Tip>
+  Use `.usingDbTime()` when configuring `JdbcTemplateLockProvider`. This makes ShedLock use the database server's clock for all time comparisons instead of the individual application server clocks. Since all nodes then share a single authoritative clock, clock drift between application servers becomes irrelevant.
+</Tip>
+
+For non-JDBC providers, ensure NTP is configured correctly on all nodes and keep `lockAtLeastFor` large enough to absorb any residual clock skew.
+
+## Lock naming
+
+Each `@SchedulerLock` annotation specifies a `name` parameter. That name must be globally unique across all tasks you want to protect — ShedLock uses it as the primary key in the lock store. If two different task methods share the same lock name, ShedLock will treat them as competing for the same lock, meaning only one can execute at a time even if they are logically different tasks.
+
+Lock names support Spring Expression Language (SpEL), which allows dynamic names based on method parameters or bean state.
+
+## Caveats
+
+**Task outlasts `lockAtMostFor`.** If execution time exceeds `lockAtMostFor`, the lock expires before the task finishes. Another node acquires the lock and begins executing the same task while the first is still running. Both nodes now hold the lock simultaneously, and the results are unpredictable. Set `lockAtMostFor` conservatively — much longer than any realistic execution — to avoid this.
+
+**Clock drift between nodes.** If the difference in clock time between two nodes exceeds `lockAtLeastFor` (or the task's actual execution time, if shorter), both nodes may believe they have the right to run the task within the same scheduling window. Using `usingDbTime()` for JDBC providers eliminates this risk by anchoring all time calculations to a single database clock.
+
+**Do not delete lock rows manually.** ShedLock caches the existence of lock rows in memory. If you delete a row directly from the database, ShedLock will not automatically recreate it until the application restarts, and the cache may be left in an inconsistent state. If you need to reset a lock, update the `lock_until` column to a past timestamp instead of deleting the row.

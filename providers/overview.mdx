@@ -1,0 +1,48 @@
+---
+title: "Lock provider overview"
+description: "ShedLock supports 20+ lock backends. Choose from SQL databases, MongoDB, Redis, NoSQL stores, distributed coordination tools, and cloud services."
+---
+
+A `LockProvider` is the bridge between ShedLock and your external store. When a scheduled task annotated with `@SchedulerLock` is about to run, ShedLock calls the `LockProvider` to attempt writing a lock record. If another node already holds the record, the current node skips execution. If the node that holds the lock crashes, the record expires automatically after `lockAtMostFor` — at which point the next node to attempt the lock will succeed. Every `LockProvider` implementation wraps a different storage backend and translates ShedLock's acquire/release operations into the primitives that backend provides.
+
+<CardGroup cols={2}>
+  <Card title="JDBC databases" icon="database" href="/providers/jdbc">
+    JdbcTemplate, R2DBC, jOOQ, Exposed (Kotlin), and Micronaut Data JDBC. Recommended for apps that already use a relational database.
+  </Card>
+  <Card title="MongoDB" icon="leaf" href="/providers/mongodb">
+    Synchronous and reactive MongoDB providers. Works with the standard MongoDB Java driver and Reactive Streams.
+  </Card>
+  <Card title="Redis" icon="bolt" href="/providers/redis">
+    Spring RedisConnectionFactory, reactive Redis, Jedis, and Lettuce client implementations.
+  </Card>
+  <Card title="NoSQL and distributed" icon="circle-nodes" href="/providers/nosql">
+    Cassandra, Elasticsearch, OpenSearch, ZooKeeper, etcd, Hazelcast, ArangoDB, Neo4j, Couchbase, Apache Ignite, NATS JetStream, and Memcached.
+  </Card>
+  <Card title="Cloud services" icon="cloud" href="/providers/cloud">
+    AWS DynamoDB, AWS S3, Google Cloud Datastore, Firestore, Cloud Storage (GCS), and Cloud Spanner.
+  </Card>
+</CardGroup>
+
+## Providers by category
+
+| Category | Providers |
+|---|---|
+| **SQL / JDBC** | JdbcTemplate, R2DBC, jOOQ, Exposed (Kotlin), Micronaut Data JDBC |
+| **Document stores** | MongoDB (synchronous), MongoDB Reactive Streams |
+| **Cache / key-value** | Redis (Spring), Redis (Reactive), Redis (Jedis), Redis (Lettuce), Hazelcast, Memcached |
+| **NoSQL** | Cassandra, Elasticsearch, OpenSearch, ArangoDB, Neo4j, Couchbase |
+| **Distributed coordination** | ZooKeeper (Curator), etcd (Jetcd), Apache Ignite, NATS JetStream |
+| **Cloud** | AWS DynamoDB, AWS S3, Google Cloud Datastore, Google Cloud Firestore, Google Cloud Storage (GCS), Google Cloud Spanner |
+| **Testing** | In-Memory |
+
+## Choosing a provider
+
+If your application already connects to a relational database, the [JDBC provider](/providers/jdbc) is the natural choice. No extra infrastructure is needed, and using `usingDbTime()` makes the locking logic reliable by grounding all time comparisons to the database server's clock.
+
+If you need sub-millisecond lock overhead and already run Redis, the [Redis provider](/providers/redis) is a good fit. Redis lock operations are fast, but be aware of the trade-offs around Redis master failure documented on that page.
+
+For every other case — document stores, graph databases, cloud-native stacks, or existing infrastructure investments — ShedLock has a provider to match. All providers implement the same `LockProvider` interface and work with the same `lockAtMostFor` / `lockAtLeastFor` semantics.
+
+<Warning>
+  Memcached is a cache, not a durable store. If the cache is full, Memcached may evict a lock entry before it has expired, causing two nodes to hold the same lock simultaneously. Only use the Memcached provider if you understand and accept this risk.
+</Warning>
